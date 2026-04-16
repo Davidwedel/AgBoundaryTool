@@ -20,6 +20,7 @@ public partial class MainWindowViewModel : ViewModelBase
 {
     private readonly GpsService _gpsService;
     private readonly BoundaryRecordingService _recordingService;
+    private readonly SettingsService _settingsService;
     private Field? _currentField;
     private Position? _temporaryOrigin; // Used when no field exists
     private Views.Controls.BoundaryVisualizationControl? _visualizationControl;
@@ -88,6 +89,7 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         _gpsService = new GpsService();
         _recordingService = new BoundaryRecordingService();
+        _settingsService = new SettingsService();
 
         _gpsService.PositionReceived += OnPositionReceived;
         _gpsService.ConnectionStatusChanged += OnConnectionStatusChanged;
@@ -95,8 +97,56 @@ public partial class MainWindowViewModel : ViewModelBase
 
         RefreshPorts();
 
-        // Set default field directory
-        FieldDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "AgBoundaryTool", "Fields");
+        // Load settings from disk
+        LoadSettings();
+    }
+
+    private void LoadSettings()
+    {
+        _settingsService.Load();
+        var settings = _settingsService.Settings;
+
+        // Apply settings
+        FieldDirectory = settings.FieldsDirectory;
+        SimulatorLatitude = settings.SimulatorLatitude;
+        SimulatorLongitude = settings.SimulatorLongitude;
+        SimulatorSteerAngle = settings.SimulatorSteerAngle;
+
+        // Select last used GPS port if available
+        if (!string.IsNullOrEmpty(settings.LastGpsPort) && AvailablePorts.Contains(settings.LastGpsPort))
+        {
+            SelectedPort = settings.LastGpsPort;
+        }
+
+        Console.WriteLine("[VIEWMODEL] Settings loaded");
+        Console.WriteLine($"[VIEWMODEL] Simulator was running: {settings.SimulatorWasRunning}");
+
+        // Auto-start simulator if it was running last time
+        if (settings.SimulatorWasRunning)
+        {
+            Console.WriteLine("[VIEWMODEL] Auto-starting simulator...");
+            Dispatcher.UIThread.Post(() => StartSimulator(), DispatcherPriority.Background);
+        }
+    }
+
+    public void SaveSettings()
+    {
+        var settings = _settingsService.Settings;
+
+        // Update current state
+        settings.SimulatorWasRunning = IsSimulatorMode;
+        settings.SimulatorLatitude = SimulatorLatitude;
+        settings.SimulatorLongitude = SimulatorLongitude;
+        settings.SimulatorSteerAngle = SimulatorSteerAngle;
+        settings.LastGpsPort = SelectedPort;
+        settings.FieldsDirectory = FieldDirectory;
+
+        if (_currentField != null)
+        {
+            settings.LastFieldName = _currentField.Name;
+        }
+
+        _settingsService.Save();
     }
 
     [RelayCommand]
@@ -130,6 +180,7 @@ public partial class MainWindowViewModel : ViewModelBase
         if (connected)
         {
             StatusText = $"Connected to {SelectedPort}";
+            SaveSettings(); // Auto-save GPS port selection
         }
         else
         {
@@ -371,6 +422,7 @@ public partial class MainWindowViewModel : ViewModelBase
         _gpsService.StartSimulator(SimulatorLatitude, SimulatorLongitude);
         IsSimulatorMode = true;
         StatusText = $"Simulator started at {SimulatorLatitude:F6}, {SimulatorLongitude:F6}";
+        SaveSettings(); // Auto-save when simulator starts
     }
 
     [RelayCommand]
@@ -379,6 +431,7 @@ public partial class MainWindowViewModel : ViewModelBase
         _gpsService.StopSimulator();
         IsSimulatorMode = false;
         StatusText = "Simulator stopped";
+        SaveSettings(); // Auto-save when simulator stops
     }
 
     [RelayCommand]

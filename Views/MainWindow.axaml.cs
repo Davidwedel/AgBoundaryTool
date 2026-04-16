@@ -17,6 +17,18 @@ public partial class MainWindow : Window
 
         // Create and add visualization control after initialization
         Loaded += OnLoaded;
+        Closing += OnClosing;
+    }
+
+    private void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        Console.WriteLine("[MAINWINDOW] Window closing, saving settings...");
+
+        // Save settings before closing
+        if (DataContext is MainWindowViewModel viewModel)
+        {
+            viewModel.SaveSettings();
+        }
     }
 
     private void OnLoaded(object? sender, Avalonia.Interactivity.RoutedEventArgs e)

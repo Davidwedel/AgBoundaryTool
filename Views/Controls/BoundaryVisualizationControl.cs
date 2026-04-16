@@ -47,6 +47,46 @@ public class BoundaryVisualizationControl : Control
 
         // Update on data changes
         ClipToBounds = true;
+
+        // Enable mouse wheel zoom
+        this.PointerWheelChanged += OnPointerWheelChanged;
+    }
+
+    private void OnPointerWheelChanged(object? sender, Avalonia.Input.PointerWheelEventArgs e)
+    {
+        // Get wheel delta (positive = zoom in, negative = zoom out)
+        double delta = e.Delta.Y;
+
+        // Adjust zoom (multiply by 1.1 for each wheel tick)
+        double zoomFactor = delta > 0 ? 1.1 : 0.9;
+        double newZoom = _zoom * zoomFactor;
+
+        // Clamp zoom between 0.1 and 20
+        newZoom = Math.Max(0.1, Math.Min(20.0, newZoom));
+
+        if (Math.Abs(newZoom - _zoom) > 0.001)
+        {
+            // Get mouse position for zoom center
+            var mousePos = e.GetPosition(this);
+
+            // Calculate world coordinates at mouse position before zoom
+            double worldX = (mousePos.X - _offset.X) / _zoom;
+            double worldY = (mousePos.Y - _offset.Y) / -_zoom;
+
+            // Update zoom
+            _zoom = newZoom;
+
+            // Adjust offset to keep mouse position at same world coordinates
+            _offset = new Point(
+                mousePos.X - worldX * _zoom,
+                mousePos.Y + worldY * _zoom
+            );
+
+            Console.WriteLine($"[VISUALIZATION] Zoom: {_zoom:F2}x");
+
+            InvalidateVisual();
+            e.Handled = true;
+        }
     }
 
     /// <summary>
