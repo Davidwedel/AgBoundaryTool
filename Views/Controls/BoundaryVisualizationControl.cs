@@ -56,8 +56,6 @@ public class BoundaryVisualizationControl : Control
     {
         _boundaryPoints = points.ToList();
 
-        Console.WriteLine($"[VISUALIZATION] SetBoundaryPoints called: {_boundaryPoints.Count} points");
-
         if (_autoZoom && _boundaryPoints.Count > 0)
         {
             AutoZoomToBoundary();
@@ -83,11 +81,15 @@ public class BoundaryVisualizationControl : Control
             SatelliteCount = position.SatelliteCount
         };
 
-        // Log first few updates
-        if (_vehicleUpdateCount++ < 5)
+        // Log every update for debugging
+        _vehicleUpdateCount++;
+        if (_vehicleUpdateCount % 10 == 0) // Log every 10th update
         {
             Console.WriteLine($"[VISUALIZATION] SetVehiclePosition #{_vehicleUpdateCount}: E={easting:F2}, N={northing:F2}, Heading={position.Heading:F1}°");
         }
+
+        // Always center camera on vehicle (grid moves, vehicle stays centered)
+        CenterOnVehicle();
 
         Dispatcher.UIThread.Post(InvalidateVisual, DispatcherPriority.Render);
     }
@@ -100,6 +102,33 @@ public class BoundaryVisualizationControl : Control
         _boundaryPoints.Clear();
         _vehiclePosition = null;
         Dispatcher.UIThread.Post(InvalidateVisual);
+    }
+
+    /// <summary>
+    /// Center camera on vehicle position
+    /// </summary>
+    private void CenterOnVehicle()
+    {
+        if (_vehiclePosition == null || Bounds.Width <= 0 || Bounds.Height <= 0) return;
+
+        // Default zoom if not set
+        if (_zoom < 0.1)
+        {
+            _zoom = 2.0; // 2 pixels per meter - shows ~400m x 300m area
+        }
+
+        // Center the vehicle in the view
+        var newOffset = new Point(
+            Bounds.Width / 2.0 - _vehiclePosition.Easting * _zoom,
+            Bounds.Height / 2.0 + _vehiclePosition.Northing * _zoom // Flip Y axis
+        );
+
+        if (_vehicleUpdateCount % 10 == 0) // Log every 10th update
+        {
+            Console.WriteLine($"[VISUALIZATION] CenterOnVehicle: E={_vehiclePosition.Easting:F2}, N={_vehiclePosition.Northing:F2}, Offset=({newOffset.X:F1},{newOffset.Y:F1}), Zoom={_zoom:F2}");
+        }
+
+        _offset = newOffset;
     }
 
     /// <summary>
@@ -138,8 +167,6 @@ public class BoundaryVisualizationControl : Control
     public override void Render(DrawingContext context)
     {
         base.Render(context);
-
-        Console.WriteLine($"[VISUALIZATION] Render called: Bounds={Bounds.Width}x{Bounds.Height}, Points={_boundaryPoints.Count}, Vehicle={(_vehiclePosition != null ? "Yes" : "No")}");
 
         // Draw background
         context.FillRectangle(_backgroundBrush, Bounds);
@@ -216,12 +243,6 @@ public class BoundaryVisualizationControl : Control
 
         // Make crosshair bigger and more visible
         double halfSize = CrosshairSize;
-
-        // Draw outer circle first
-        var outerCircle = new EllipseGeometry(new Rect(
-            screenPos.X - halfSize, screenPos.Y - halfSize,
-            CrosshairSize * 2, CrosshairSize * 2));
-        context.DrawGeometry(null, _vehiclePen, outerCircle);
 
         // Draw crosshair lines (thicker)
         var thickPen = new Pen(_vehicleBrush, 3.0);

@@ -21,6 +21,7 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly GpsService _gpsService;
     private readonly BoundaryRecordingService _recordingService;
     private Field? _currentField;
+    private Position? _temporaryOrigin; // Used when no field exists
     private Views.Controls.BoundaryVisualizationControl? _visualizationControl;
 
     [ObservableProperty]
@@ -169,17 +170,30 @@ public partial class MainWindowViewModel : ViewModelBase
         Directory.CreateDirectory(fieldPath);
 
         // Create new field with current GPS position as origin
+        // IMPORTANT: Create a NEW Position object, not a reference to CurrentPosition
+        // (CurrentPosition gets updated on every GPS tick)
+        var currentPos = _gpsService.CurrentPosition;
         _currentField = new Field
         {
             Name = FieldName,
             DirectoryPath = fieldPath,
-            Origin = _gpsService.CurrentPosition,
+            Origin = new Position
+            {
+                Latitude = currentPos.Latitude,
+                Longitude = currentPos.Longitude,
+                Altitude = currentPos.Altitude,
+                FixQuality = currentPos.FixQuality,
+                SatelliteCount = currentPos.SatelliteCount
+            },
             CreatedDate = DateTime.Now,
             Boundary = new Boundary()
         };
 
         // Save field
         FieldPlaneFileService.SaveField(_currentField, fieldPath);
+
+        // Clear temporary origin since we now have a field origin
+        _temporaryOrigin = null;
 
         StatusText = $"Created field '{FieldName}' at {_currentField.Origin.Latitude:F6}, {_currentField.Origin.Longitude:F6}";
     }
@@ -317,9 +331,33 @@ public partial class MainWindowViewModel : ViewModelBase
             SatelliteCount = position.SatelliteCount;
 
             // Update visualization with vehicle position
-            if (_visualizationControl != null && _currentField != null)
+            if (_visualizationControl != null)
             {
-                var (easting, northing) = CoordinateConversionService.ToLocal(position, _currentField.Origin);
+                // Use field origin if available, otherwise use first GPS position as temporary origin
+                Position origin;
+                if (_currentField != null)
+                {
+                    origin = _currentField.Origin;
+                    Console.WriteLine($"[VIEWMODEL] Using field origin: {origin.Latitude:F6}, {origin.Longitude:F6}");
+                }
+                else
+                {
+                    // Set temporary origin on first position
+                    if (_temporaryOrigin == null)
+                    {
+                        _temporaryOrigin = new Position
+                        {
+                            Latitude = position.Latitude,
+                            Longitude = position.Longitude
+                        };
+                        Console.WriteLine($"[VIEWMODEL] Temporary origin set: {_temporaryOrigin.Latitude:F6}, {_temporaryOrigin.Longitude:F6}");
+                    }
+                    origin = _temporaryOrigin;
+                }
+
+                var (easting, northing) = CoordinateConversionService.ToLocal(position, origin);
+                Console.WriteLine($"[VIEWMODEL] Position: Lat={position.Latitude:F6}, Lon={position.Longitude:F6} -> E={easting:F2}, N={northing:F2}");
+
                 _visualizationControl.SetVehiclePosition(position, easting, northing);
             }
 
