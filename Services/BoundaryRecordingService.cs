@@ -15,7 +15,7 @@ public class BoundaryRecordingService
     private List<BoundaryPoint> _recordedPoints = new List<BoundaryPoint>();
     private Position? _fieldOrigin;
     private Position? _lastRecordedPosition;
-    private double _minimumPointDistance = 2.0; // meters - don't record points closer than this
+    private double _minimumPointDistance = 1.0; // meters - don't record points closer than this
 
     /// <summary>
     /// Is currently recording a boundary
@@ -54,7 +54,13 @@ public class BoundaryRecordingService
         Console.WriteLine($"[RECORDING] Started boundary recording at origin: {fieldOrigin.Latitude:F6}, {fieldOrigin.Longitude:F6}");
         Console.WriteLine($"[RECORDING] Minimum point distance: {_minimumPointDistance}m");
 
-        _fieldOrigin = fieldOrigin;
+        // Create a copy of the origin to avoid reference issues
+        _fieldOrigin = new Position
+        {
+            Latitude = fieldOrigin.Latitude,
+            Longitude = fieldOrigin.Longitude,
+            Altitude = fieldOrigin.Altitude
+        };
         _recordedPoints.Clear();
         _lastRecordedPosition = null;
         IsRecording = true;
@@ -67,6 +73,7 @@ public class BoundaryRecordingService
     {
         if (!IsRecording || _fieldOrigin == null)
         {
+            Console.WriteLine($"[RECORDING] RecordPosition called but IsRecording={IsRecording}, _fieldOrigin={(_fieldOrigin != null ? "set" : "null")}");
             return false;
         }
 
@@ -76,7 +83,8 @@ public class BoundaryRecordingService
             double distance = CoordinateConversionService.Distance(gpsPosition, _lastRecordedPosition);
             if (distance < _minimumPointDistance)
             {
-                return false; // Skip point - too close to last one
+                // Point too close, skip silently
+                return false;
             }
         }
 
@@ -91,12 +99,19 @@ public class BoundaryRecordingService
             heading = heading * Math.PI / 180.0; // Convert to radians
         }
 
-        // Create and add boundary point
+        // Create and add boundary point (make a copy of gpsPosition)
         var boundaryPoint = new BoundaryPoint(easting, northing, heading);
         _recordedPoints.Add(boundaryPoint);
-        _lastRecordedPosition = gpsPosition;
 
-        Console.WriteLine($"[RECORDING] Point #{_recordedPoints.Count}: E={easting:F2}m, N={northing:F2}m");
+        // Store a copy of the position
+        _lastRecordedPosition = new Position
+        {
+            Latitude = gpsPosition.Latitude,
+            Longitude = gpsPosition.Longitude,
+            Altitude = gpsPosition.Altitude
+        };
+
+        Console.WriteLine($"[RECORDING] Point #{_recordedPoints.Count} recorded: E={easting:F2}m, N={northing:F2}m");
 
         PointRecorded?.Invoke(this, boundaryPoint);
         return true;

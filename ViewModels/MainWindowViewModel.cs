@@ -338,7 +338,6 @@ public partial class MainWindowViewModel : ViewModelBase
                 if (_currentField != null)
                 {
                     origin = _currentField.Origin;
-                    Console.WriteLine($"[VIEWMODEL] Using field origin: {origin.Latitude:F6}, {origin.Longitude:F6}");
                 }
                 else
                 {
@@ -356,8 +355,6 @@ public partial class MainWindowViewModel : ViewModelBase
                 }
 
                 var (easting, northing) = CoordinateConversionService.ToLocal(position, origin);
-                Console.WriteLine($"[VIEWMODEL] Position: Lat={position.Latitude:F6}, Lon={position.Longitude:F6} -> E={easting:F2}, N={northing:F2}");
-
                 _visualizationControl.SetVehiclePosition(position, easting, northing);
             }
 
@@ -466,6 +463,8 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             BoundaryPoints.Add(point);
             PointCount = BoundaryPoints.Count;
+
+            Console.WriteLine($"[VIEWMODEL] Point recorded, total: {PointCount}. Updating visualization...");
 
             // Update visualization with new boundary points
             _visualizationControl?.SetBoundaryPoints(BoundaryPoints);
