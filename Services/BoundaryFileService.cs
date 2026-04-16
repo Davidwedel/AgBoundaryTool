@@ -1,0 +1,257 @@
+// AgBoundaryTool
+// Boundary manipulation tool compatible with AgValoniaGPS/AgOpenGPS field format
+// Ported from AgValoniaGPS BoundaryFileService
+
+using System;
+using System.Globalization;
+using System.IO;
+using System.Text;
+using AgBoundaryTool.Models;
+
+namespace AgBoundaryTool.Services;
+
+/// <summary>
+/// Service for reading and writing Boundary.txt files
+/// Compatible with AgOpenGPS/AgValoniaGPS format
+/// </summary>
+public static class BoundaryFileService
+{
+    /// <summary>
+    /// Load boundary from Boundary.txt
+    /// </summary>
+    public static Boundary LoadBoundary(string fieldDirectory)
+    {
+        var boundary = new Boundary();
+        var boundaryFilePath = Path.Combine(fieldDirectory, "Boundary.txt");
+
+        if (!File.Exists(boundaryFilePath))
+        {
+            return boundary; // Return empty boundary if file doesn't exist
+        }
+
+        using (var reader = new StreamReader(boundaryFilePath))
+        {
+            // Skip optional header
+            string? line = reader.ReadLine();
+            if (line != null && !line.TrimStart().StartsWith("$", StringComparison.OrdinalIgnoreCase))
+            {
+                // First line was not header -> treat as first data line
+                reader.BaseStream.Seek(0, SeekOrigin.Begin);
+                reader.DiscardBufferedData();
+            }
+
+            // Read polygons (first is outer, rest are inner)
+            bool isFirst = true;
+            while (!reader.EndOfStream)
+            {
+                var polygon = ReadBoundaryPolygon(reader);
+                if (polygon != null && polygon.IsValid)
+                {
+                    if (isFirst)
+                    {
+                        boundary.OuterBoundary = polygon;
+                        isFirst = false;
+                    }
+                    else
+                    {
+                        boundary.InnerBoundaries.Add(polygon);
+                    }
+                }
+                else if (polygon == null)
+                {
+                    break;
+                }
+            }
+        }
+
+        // Load headland if exists
+        LoadHeadland(fieldDirectory, boundary);
+
+        return boundary;
+    }
+
+    /// <summary>
+    /// Load headland from Headland.Txt
+    /// </summary>
+    private static void LoadHeadland(string fieldDirectory, Boundary boundary)
+    {
+        var headlandFilePath = Path.Combine(fieldDirectory, "Headland.Txt");
+        if (!File.Exists(headlandFilePath))
+        {
+            return;
+        }
+
+        using (var reader = new StreamReader(headlandFilePath))
+        {
+            // Skip optional header
+            string? line = reader.ReadLine();
+            if (line != null && !line.TrimStart().StartsWith("$", StringComparison.OrdinalIgnoreCase))
+            {
+                reader.BaseStream.Seek(0, SeekOrigin.Begin);
+                reader.DiscardBufferedData();
+            }
+
+            var headland = ReadBoundaryPolygon(reader);
+            if (headland != null && headland.IsValid)
+            {
+                boundary.HeadlandPolygon = headland;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Read a single boundary polygon from the reader
+    /// </summary>
+    private static BoundaryPolygon? ReadBoundaryPolygon(StreamReader reader)
+    {
+        var polygon = new BoundaryPolygon();
+        string? line = reader.ReadLine();
+
+        // Skip empty lines
+        while (line != null && string.IsNullOrWhiteSpace(line))
+        {
+            line = reader.ReadLine();
+        }
+
+        if (line == null) return null;
+
+        // Handle isDriveThru flag (may appear twice in legacy files)
+        for (int pass = 0; pass < 2; pass++)
+        {
+            if (bool.TryParse(line?.Trim(), out bool isDriveThru))
+            {
+                polygon.IsDriveThrough = isDriveThru;
+                line = reader.ReadLine();
+                if (line == null) return null;
+                continue;
+            }
+            break;
+        }
+
+        if (line == null) return null;
+
+        // Read point count
+        if (!int.TryParse(line.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int count))
+        {
+            return null;
+        }
+
+        // Read points
+        for (int i = 0; i < count; i++)
+        {
+            line = reader.ReadLine();
+            if (line == null) break;
+
+            var parts = line.Split(',');
+            if (parts.Length < 3) continue;
+
+            if (double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double easting) &&
+                double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double northing) &&
+                double.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out double heading))
+            {
+                polygon.Points.Add(new BoundaryPoint(easting, northing, heading));
+            }
+        }
+
+        return polygon;
+    }
+
+    /// <summary>
+    /// Save boundary to Boundary.txt
+    /// </summary>
+    public static void SaveBoundary(Boundary boundary, string fieldDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(fieldDirectory))
+        {
+            throw new ArgumentNullException(nameof(fieldDirectory));
+        }
+
+        Console.WriteLine($"[BOUNDARY] Saving boundary to {fieldDirectory}");
+
+        if (!Directory.Exists(fieldDirectory))
+        {
+            Directory.CreateDirectory(fieldDirectory);
+        }
+
+        var boundaryFilePath = Path.Combine(fieldDirectory, "Boundary.txt");
+
+        using (var writer = new StreamWriter(boundaryFilePath, false))
+        {
+            writer.WriteLine("$Boundary");
+
+            // Write outer boundary
+            if (boundary.OuterBoundary != null && boundary.OuterBoundary.IsValid)
+            {
+                WriteBoundaryPolygon(writer, boundary.OuterBoundary);
+            }
+
+            // Write inner boundaries (holes)
+            foreach (var innerBoundary in boundary.InnerBoundaries)
+            {
+                if (innerBoundary.IsValid)
+                {
+                    WriteBoundaryPolygon(writer, innerBoundary);
+                }
+            }
+        }
+
+        Console.WriteLine($"[BOUNDARY] Saved {(boundary.OuterBoundary != null ? 1 : 0)} outer + {boundary.InnerBoundaries.Count} inner boundaries");
+
+        // Save headland if exists
+        if (boundary.HeadlandPolygon != null && boundary.HeadlandPolygon.IsValid)
+        {
+            SaveHeadland(boundary.HeadlandPolygon, fieldDirectory);
+        }
+    }
+
+    /// <summary>
+    /// Save headland to Headland.Txt
+    /// </summary>
+    private static void SaveHeadland(BoundaryPolygon headland, string fieldDirectory)
+    {
+        var headlandFilePath = Path.Combine(fieldDirectory, "Headland.Txt");
+
+        using (var writer = new StreamWriter(headlandFilePath, false))
+        {
+            writer.WriteLine("$Headland");
+            WriteBoundaryPolygon(writer, headland);
+        }
+    }
+
+    /// <summary>
+    /// Write a single boundary polygon
+    /// </summary>
+    private static void WriteBoundaryPolygon(StreamWriter writer, BoundaryPolygon polygon)
+    {
+        // Write isDriveThru flag
+        writer.WriteLine(polygon.IsDriveThrough.ToString());
+
+        // Write point count
+        writer.WriteLine(polygon.Points.Count.ToString(CultureInfo.InvariantCulture));
+
+        // Write points (Easting, Northing, Heading)
+        foreach (var point in polygon.Points)
+        {
+            writer.WriteLine($"{point.Easting.ToString("F3", CultureInfo.InvariantCulture)},{point.Northing.ToString("F3", CultureInfo.InvariantCulture)},{point.Heading.ToString("F5", CultureInfo.InvariantCulture)}");
+        }
+    }
+
+    /// <summary>
+    /// Create an empty Boundary.txt
+    /// </summary>
+    public static void CreateEmptyBoundary(string fieldDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(fieldDirectory))
+        {
+            throw new ArgumentNullException(nameof(fieldDirectory));
+        }
+
+        if (!Directory.Exists(fieldDirectory))
+        {
+            Directory.CreateDirectory(fieldDirectory);
+        }
+
+        var boundaryFilePath = Path.Combine(fieldDirectory, "Boundary.txt");
+        File.WriteAllText(boundaryFilePath, "$Boundary" + Environment.NewLine, Encoding.UTF8);
+    }
+}

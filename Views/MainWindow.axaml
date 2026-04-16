@@ -1,0 +1,236 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:AgBoundaryTool.ViewModels"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
+        x:Class="AgBoundaryTool.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="AgBoundaryTool - Field Boundary Manager"
+        Width="1200" Height="800">
+
+    <Design.DataContext>
+        <vm:MainWindowViewModel/>
+    </Design.DataContext>
+
+    <Grid Margin="10">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="350"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- Left Panel: Controls -->
+        <Border Grid.Column="0" BorderBrush="Gray" BorderThickness="1" CornerRadius="5" Padding="10">
+            <ScrollViewer>
+                <StackPanel Spacing="15">
+
+                    <!-- GPS Connection Section -->
+                    <Border BorderBrush="DarkGreen" BorderThickness="2" CornerRadius="5" Padding="10">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="GPS Connection" FontWeight="Bold" FontSize="16"/>
+
+                            <StackPanel Spacing="5">
+                                <TextBlock Text="Serial Port:"/>
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <ComboBox Grid.Column="0"
+                                              ItemsSource="{Binding AvailablePorts}"
+                                              SelectedItem="{Binding SelectedPort}"/>
+                                    <Button Grid.Column="1" Content="↻"
+                                            Command="{Binding RefreshPortsCommand}"
+                                            Width="40" Margin="5,0,0,0"
+                                            ToolTip.Tip="Refresh ports"/>
+                                </Grid>
+                            </StackPanel>
+
+                            <Grid ColumnDefinitions="*,*">
+                                <Button Grid.Column="0" Content="Connect"
+                                        Command="{Binding ConnectGpsCommand}"
+                                        IsEnabled="{Binding !IsConnected}"
+                                        Margin="0,0,2.5,0"/>
+                                <Button Grid.Column="1" Content="Disconnect"
+                                        Command="{Binding DisconnectGpsCommand}"
+                                        IsEnabled="{Binding IsConnected}"
+                                        Margin="2.5,0,0,0"/>
+                            </Grid>
+
+                            <Border Background="#F0F0F0" Padding="8" CornerRadius="3">
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="{Binding StatusText}" FontWeight="SemiBold"/>
+                                    <TextBlock Text="{Binding Latitude, StringFormat='Lat: {0:F6}°'}"/>
+                                    <TextBlock Text="{Binding Longitude, StringFormat='Lon: {0:F6}°'}"/>
+                                    <TextBlock Text="{Binding Altitude, StringFormat='Alt: {0:F1} m'}"/>
+                                    <TextBlock Text="{Binding Heading, StringFormat='Heading: {0:F1}°'}"/>
+                                    <TextBlock Text="{Binding Speed, StringFormat='Speed: {0:F1} m/s'}"/>
+                                    <TextBlock Text="{Binding SatelliteCount, StringFormat='Satellites: {0}'}"/>
+                                    <TextBlock Text="{Binding FixQuality, StringFormat='Fix Quality: {0}'}"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- GPS Simulator Section -->
+                    <Border BorderBrush="DarkMagenta" BorderThickness="2" CornerRadius="5" Padding="10">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="GPS Simulator" FontWeight="Bold" FontSize="16"/>
+
+                            <StackPanel Spacing="5">
+                                <TextBlock Text="Start Position:"/>
+                                <Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Grid.Column="0" Text="Lat:" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                                    <TextBox Grid.Column="1" Text="{Binding SimulatorLatitude}"/>
+                                </Grid>
+                                <Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Grid.Column="0" Text="Lon:" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                                    <TextBox Grid.Column="1" Text="{Binding SimulatorLongitude}"/>
+                                </Grid>
+                            </StackPanel>
+
+                            <Grid ColumnDefinitions="*,*">
+                                <Button Grid.Column="0" Content="Start Simulator"
+                                        Command="{Binding StartSimulatorCommand}"
+                                        IsEnabled="{Binding !IsConnected}"
+                                        Margin="0,0,2.5,0"/>
+                                <Button Grid.Column="1" Content="Stop Simulator"
+                                        Command="{Binding StopSimulatorGpsCommand}"
+                                        IsEnabled="{Binding IsSimulatorMode}"
+                                        Margin="2.5,0,0,0"/>
+                            </Grid>
+
+                            <Border Background="#F5F5F5" Padding="8" CornerRadius="3"
+                                    IsVisible="{Binding IsSimulatorMode}">
+                                <StackPanel Spacing="5">
+                                    <TextBlock Text="Controls:" FontWeight="SemiBold"/>
+
+                                    <StackPanel Spacing="3">
+                                        <TextBlock Text="Steer Angle (°):"/>
+                                        <Slider Minimum="-40" Maximum="40" Value="{Binding SimulatorSteerAngle}"/>
+                                        <TextBlock Text="{Binding SimulatorSteerAngle, StringFormat='{}{0:F1}°'}"
+                                                   HorizontalAlignment="Center"/>
+                                    </StackPanel>
+
+                                    <Grid ColumnDefinitions="*,*,*">
+                                        <Button Grid.Column="0" Content="⏴ Backward"
+                                                Command="{Binding SimulatorAccelerateBackwardCommand}"
+                                                Margin="0,0,2,0"/>
+                                        <Button Grid.Column="1" Content="▶ Forward"
+                                                Command="{Binding SimulatorAccelerateForwardCommand}"
+                                                Margin="2,0,2,0"/>
+                                        <Button Grid.Column="2" Content="⏸ Stop"
+                                                Command="{Binding SimulatorStopAccelerationCommand}"
+                                                Margin="2,0,0,0"/>
+                                    </Grid>
+
+                                    <Button Content="Reset Position"
+                                            Command="{Binding SimulatorResetPositionCommand}"/>
+
+                                    <TextBlock Text="Use WASD keys: W=Forward, S=Backward, A=Left, D=Right"
+                                               FontSize="11" Foreground="Gray" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Field Management Section -->
+                    <Border BorderBrush="DarkBlue" BorderThickness="2" CornerRadius="5" Padding="10">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Field Management" FontWeight="Bold" FontSize="16"/>
+
+                            <StackPanel Spacing="5">
+                                <TextBlock Text="Field Name:"/>
+                                <TextBox Text="{Binding FieldName}"/>
+                            </StackPanel>
+
+                            <StackPanel Spacing="5">
+                                <TextBlock Text="Field Directory:"/>
+                                <TextBox Text="{Binding FieldDirectory}" IsReadOnly="True"
+                                         ToolTip.Tip="{Binding FieldDirectory}"/>
+                            </StackPanel>
+
+                            <Button Content="Create New Field"
+                                    Command="{Binding CreateNewFieldCommand}"
+                                    IsEnabled="{Binding IsConnected}"/>
+
+                            <Grid ColumnDefinitions="*,*">
+                                <Button Grid.Column="0" Content="Load Field"
+                                        Command="{Binding LoadFieldCommand}"
+                                        Margin="0,0,2.5,0"/>
+                                <Button Grid.Column="1" Content="Save Field"
+                                        Command="{Binding SaveFieldCommand}"
+                                        Margin="2.5,0,0,0"/>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Boundary Recording Section -->
+                    <Border BorderBrush="DarkOrange" BorderThickness="2" CornerRadius="5" Padding="10">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Boundary Recording" FontWeight="Bold" FontSize="16"/>
+
+                            <Border Background="#F0F0F0" Padding="8" CornerRadius="3">
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="{Binding PointCount, StringFormat='Points Recorded: {0}'}"/>
+                                    <TextBlock Text="{Binding BoundaryArea, StringFormat='Area: {0:F2} ha'}"/>
+                                </StackPanel>
+                            </Border>
+
+                            <Button Content="Start Recording"
+                                    Command="{Binding StartRecordingCommand}"
+                                    IsEnabled="{Binding !IsRecording}"
+                                    Background="Green" Foreground="White"/>
+
+                            <Button Content="Stop Recording"
+                                    Command="{Binding StopRecordingCommand}"
+                                    IsEnabled="{Binding IsRecording}"
+                                    Background="Red" Foreground="White"/>
+
+                            <Grid ColumnDefinitions="*,*">
+                                <Button Grid.Column="0" Content="Remove Last Point"
+                                        Command="{Binding RemoveLastPointCommand}"
+                                        IsEnabled="{Binding IsRecording}"
+                                        Margin="0,0,2.5,0"/>
+                                <Button Grid.Column="1" Content="Cancel"
+                                        Command="{Binding CancelRecordingCommand}"
+                                        IsEnabled="{Binding IsRecording}"
+                                        Margin="2.5,0,0,0"/>
+                            </Grid>
+
+                            <TextBlock Text="Instructions:" FontWeight="SemiBold" Margin="0,10,0,0"/>
+                            <TextBlock TextWrapping="Wrap" FontSize="12">
+                                1. Connect to GPS receiver
+                                2. Wait for GPS fix
+                                3. Create a new field (sets origin point)
+                                4. Drive to field boundary
+                                5. Click 'Start Recording'
+                                6. Drive around the field perimeter
+                                7. Click 'Stop Recording' when complete
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+
+        <!-- Right Panel: Boundary Visualization -->
+        <Border Grid.Column="1" BorderBrush="Gray" BorderThickness="1" CornerRadius="5" Margin="10,0,0,0">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <!-- Visualization Header -->
+                <Border Grid.Row="0" Background="#E0E0E0" Padding="10" BorderBrush="Gray" BorderThickness="0,0,0,1">
+                    <TextBlock Text="Boundary Visualization" FontWeight="Bold" FontSize="16"/>
+                </Border>
+
+                <!-- Boundary visualization control -->
+                <Border Grid.Row="1" Background="Black" Margin="10" ClipToBounds="True" Name="VisualizationBorder">
+                    <!-- Custom control will be created in code-behind -->
+                </Border>
+            </Grid>
+        </Border>
+
+    </Grid>
+
+</Window>
