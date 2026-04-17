@@ -48,6 +48,13 @@
                     <Image Source="/btnImages/Boundary.png" Stretch="Uniform"/>
                 </Button>
 
+                <Button Command="{Binding OpenBoundaryNotchDialogCommand}"
+                        Height="60" Width="60"
+                        ToolTip.Tip="Boundary Notch">
+                    <TextBlock Text="NOTCH" FontSize="12" FontWeight="Bold"
+                               VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                </Button>
+
             </StackPanel>
         </Border>
 

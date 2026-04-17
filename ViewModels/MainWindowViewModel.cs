@@ -82,8 +82,18 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     private bool _isSimulatorMode = false;
 
+    [ObservableProperty]
+    private bool _isRecordingNotch = false;
+
+    [ObservableProperty]
+    private int _notchPointCount = 0;
+
+    [ObservableProperty]
+    private bool _canApplyNotch = false;
+
     public ObservableCollection<string> AvailablePorts { get; } = new ObservableCollection<string>();
     public ObservableCollection<BoundaryPoint> BoundaryPoints { get; } = new ObservableCollection<BoundaryPoint>();
+    public ObservableCollection<BoundaryPoint> NotchPoints { get; } = new ObservableCollection<BoundaryPoint>();
 
     public MainWindowViewModel()
     {
@@ -168,41 +178,73 @@ public partial class MainWindowViewModel : ViewModelBase
     [RelayCommand]
     private void OpenGpsConnectionDialog()
     {
+        var mainWindow = GetMainWindow();
+        if (mainWindow == null) return;
+
         var dialog = new Views.Dialogs.GpsConnectionDialog
         {
             DataContext = this
         };
-        dialog.Show();
+        dialog.Show(mainWindow);
     }
 
     [RelayCommand]
     private void OpenGpsSimulatorDialog()
     {
+        var mainWindow = GetMainWindow();
+        if (mainWindow == null) return;
+
         var dialog = new Views.Dialogs.GpsSimulatorDialog
         {
             DataContext = this
         };
-        dialog.Show();
+        dialog.Show(mainWindow);
     }
 
     [RelayCommand]
     private void OpenFieldManagementDialog()
     {
+        var mainWindow = GetMainWindow();
+        if (mainWindow == null) return;
+
         var dialog = new Views.Dialogs.FieldManagementDialog
         {
             DataContext = this
         };
-        dialog.Show();
+        dialog.Show(mainWindow);
     }
 
     [RelayCommand]
     private void OpenBoundaryRecordingDialog()
     {
+        var mainWindow = GetMainWindow();
+        if (mainWindow == null) return;
+
         var dialog = new Views.Dialogs.BoundaryRecordingDialog
         {
             DataContext = this
         };
-        dialog.Show();
+        dialog.Show(mainWindow);
+    }
+
+    [RelayCommand]
+    private void OpenBoundaryNotchDialog()
+    {
+        var mainWindow = GetMainWindow();
+        if (mainWindow == null) return;
+
+        var dialog = new Views.Dialogs.BoundaryNotchDialog
+        {
+            DataContext = this
+        };
+        dialog.Show(mainWindow);
+    }
+
+    private Avalonia.Controls.Window? GetMainWindow()
+    {
+        return Avalonia.Application.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
+            ? desktop.MainWindow
+            : null;
     }
 
     [RelayCommand]
@@ -719,6 +761,44 @@ public partial class MainWindowViewModel : ViewModelBase
             {
                 _recordingService.RecordPosition(position);
             }
+
+            // Record notch points if notch recording is active
+            if (IsRecordingNotch && _currentField != null)
+            {
+                // Check if we should record this point (1m minimum distance)
+                if (NotchPoints.Count == 0)
+                {
+                    // First point - always record
+                    var (e, n) = CoordinateConversionService.ToLocal(position, _currentField.Origin);
+                    NotchPoints.Add(new BoundaryPoint(e, n, 0));
+                    NotchPointCount = NotchPoints.Count;
+                    Console.WriteLine($"[VIEWMODEL] Notch point #{NotchPointCount} recorded: E={e:F2}m, N={n:F2}m");
+
+                    // Update visualization
+                    _visualizationControl?.SetNotchPoints(NotchPoints);
+                }
+                else
+                {
+                    // Check distance from last point
+                    var lastPoint = NotchPoints[NotchPoints.Count - 1];
+                    var (e, n) = CoordinateConversionService.ToLocal(position, _currentField.Origin);
+
+                    double distance = Math.Sqrt(
+                        Math.Pow(e - lastPoint.Easting, 2) +
+                        Math.Pow(n - lastPoint.Northing, 2)
+                    );
+
+                    if (distance >= 1.0) // 1 meter minimum
+                    {
+                        NotchPoints.Add(new BoundaryPoint(e, n, 0));
+                        NotchPointCount = NotchPoints.Count;
+                        Console.WriteLine($"[VIEWMODEL] Notch point #{NotchPointCount} recorded: E={e:F2}m, N={n:F2}m (dist={distance:F2}m)");
+
+                        // Update visualization
+                        _visualizationControl?.SetNotchPoints(NotchPoints);
+                    }
+                }
+            }
         });
     }
 
@@ -785,7 +865,8 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             _gpsService.Simulator.IsAcceleratingForward = false;
             _gpsService.Simulator.IsAcceleratingBackward = false;
-            StatusText = "Stopped - coasting to halt";
+            _gpsService.Simulator.StepDistance = 0; // Stop instantly, no coast
+            StatusText = "Stopped";
         }
     }
 
@@ -805,6 +886,306 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             _gpsService.Simulator.SteerAngle = value;
         }
+    }
+
+    [RelayCommand]
+    private void StartRecordingNotch()
+    {
+        if (_currentField == null || _currentField.Boundary?.OuterBoundary == null)
+        {
+            StatusText = "Please create a boundary first";
+            return;
+        }
+
+        if (!IsConnected)
+        {
+            StatusText = "No GPS fix - cannot start recording notch";
+            return;
+        }
+
+        NotchPoints.Clear();
+        NotchPointCount = 0;
+        CanApplyNotch = false;
+        IsRecordingNotch = true;
+        StatusText = "Recording notch points...";
+        Console.WriteLine("[VIEWMODEL] Started recording notch");
+    }
+
+    [RelayCommand]
+    private void StopRecordingNotch()
+    {
+        if (!IsRecordingNotch)
+        {
+            return;
+        }
+
+        IsRecordingNotch = false;
+
+        // Check if we have enough points and if they cross the boundary twice
+        if (NotchPoints.Count < 2)
+        {
+            StatusText = "Not enough notch points (minimum 2 required)";
+            CanApplyNotch = false;
+            return;
+        }
+
+        // Check if notch path crosses boundary
+        var crossings = FindBoundaryCrossings(NotchPoints.ToList());
+        CanApplyNotch = crossings.Count >= 2;
+
+        if (CanApplyNotch)
+        {
+            StatusText = $"Notch recorded: {NotchPoints.Count} points, {crossings.Count} boundary crossings";
+            Console.WriteLine($"[VIEWMODEL] Notch recording stopped. Found {crossings.Count} crossings");
+        }
+        else
+        {
+            StatusText = "Notch must cross boundary at least twice";
+            Console.WriteLine("[VIEWMODEL] Notch recording stopped but not enough crossings");
+        }
+    }
+
+    [RelayCommand]
+    private void ApplyNotch()
+    {
+        if (!CanApplyNotch || _currentField?.Boundary?.OuterBoundary == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var crossingsWithNotchIndex = FindBoundaryCrossingsWithNotchIndex(NotchPoints.ToList());
+            if (crossingsWithNotchIndex.Count < 2)
+            {
+                StatusText = "Cannot apply notch - must cross boundary at least twice";
+                return;
+            }
+
+            // Get first two crossings (in chronological order - order they were crossed in time)
+            var crossing1 = crossingsWithNotchIndex[0];
+            var crossing2 = crossingsWithNotchIndex[1];
+
+            Console.WriteLine($"[VIEWMODEL] Applying notch between crossings at boundary segment {crossing1.BoundarySegmentIndex} and {crossing2.BoundarySegmentIndex}");
+            Console.WriteLine($"[VIEWMODEL] Crossing 1 (time): E={crossing1.CrossingPoint.Easting:F2}, N={crossing1.CrossingPoint.Northing:F2}, notch index={crossing1.NotchSegmentIndex}");
+            Console.WriteLine($"[VIEWMODEL] Crossing 2 (time): E={crossing2.CrossingPoint.Easting:F2}, N={crossing2.CrossingPoint.Northing:F2}, notch index={crossing2.NotchSegmentIndex}");
+
+            // Build new boundary with notch inserted at intersection points
+            var oldBoundary = _currentField.Boundary.OuterBoundary.Points;
+            var newBoundary = new List<BoundaryPoint>();
+
+            // Determine which crossing comes first/second in the boundary (spatially, not temporally)
+            int firstBoundaryIdx = Math.Min(crossing1.BoundarySegmentIndex, crossing2.BoundarySegmentIndex);
+            int secondBoundaryIdx = Math.Max(crossing1.BoundarySegmentIndex, crossing2.BoundarySegmentIndex);
+
+            // Keep track of which crossing (chronologically) corresponds to which boundary position
+            var firstBoundaryCrossing = crossing1.BoundarySegmentIndex <= crossing2.BoundarySegmentIndex ? crossing1 : crossing2;
+            var secondBoundaryCrossing = crossing1.BoundarySegmentIndex <= crossing2.BoundarySegmentIndex ? crossing2 : crossing1;
+
+            // Add boundary points up to first boundary crossing
+            for (int i = 0; i <= firstBoundaryIdx; i++)
+            {
+                newBoundary.Add(oldBoundary[i]);
+            }
+
+            // Add first boundary intersection point
+            newBoundary.Add(firstBoundaryCrossing.CrossingPoint);
+
+            // Add the notch points between the chronological first and second crossings
+            // Use crossing1 and crossing2 (chronological order) to get the notch segment
+            int startNotchIdx = Math.Min(crossing1.NotchSegmentIndex, crossing2.NotchSegmentIndex);
+            int endNotchIdx = Math.Max(crossing1.NotchSegmentIndex, crossing2.NotchSegmentIndex);
+
+            Console.WriteLine($"[VIEWMODEL] Adding notch points from index {startNotchIdx} to {endNotchIdx}");
+
+            var notchPointsToAdd = new List<BoundaryPoint>();
+            for (int i = startNotchIdx + 1; i <= endNotchIdx; i++)
+            {
+                if (i < NotchPoints.Count)
+                {
+                    notchPointsToAdd.Add(NotchPoints[i]);
+                }
+            }
+
+            // Determine if we need to reverse based on which boundary crossing came first
+            // If crossing1 (chronological first) is the second boundary crossing (spatial),
+            // then we need to reverse the notch points
+            if (firstBoundaryCrossing.NotchSegmentIndex > secondBoundaryCrossing.NotchSegmentIndex)
+            {
+                notchPointsToAdd.Reverse();
+                Console.WriteLine($"[VIEWMODEL] Reversing notch points to match boundary direction");
+            }
+
+            newBoundary.AddRange(notchPointsToAdd);
+
+            // Add second boundary intersection point
+            newBoundary.Add(secondBoundaryCrossing.CrossingPoint);
+
+            // Skip boundary points between the crossings, continue after second crossing
+            // This removes the original boundary segment and replaces it with the notch
+            for (int i = secondBoundaryIdx + 1; i < oldBoundary.Count; i++)
+            {
+                newBoundary.Add(oldBoundary[i]);
+            }
+
+            // Replace boundary with new one
+            _currentField.Boundary.OuterBoundary.Points = newBoundary;
+
+            // Update boundary visualization
+            BoundaryPoints.Clear();
+            foreach (var pt in newBoundary)
+            {
+                BoundaryPoints.Add(pt);
+            }
+            _visualizationControl?.SetBoundaryPoints(BoundaryPoints);
+
+            // Save modified boundary
+            BoundaryFileService.SaveBoundary(_currentField.Boundary, _currentField.DirectoryPath);
+
+            StatusText = $"Notch applied to boundary";
+            Console.WriteLine($"[VIEWMODEL] Notch applied successfully. New boundary: {newBoundary.Count} points");
+
+            // Clear notch data
+            NotchPoints.Clear();
+            NotchPointCount = 0;
+            CanApplyNotch = false;
+
+            // Clear notch visualization
+            _visualizationControl?.SetNotchPoints(NotchPoints);
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Error applying notch: {ex.Message}";
+            Console.WriteLine($"[VIEWMODEL] Error applying notch: {ex.Message}");
+            Console.WriteLine($"[VIEWMODEL] Stack trace: {ex.StackTrace}");
+        }
+    }
+
+    [RelayCommand]
+    private void CancelNotch()
+    {
+        NotchPoints.Clear();
+        NotchPointCount = 0;
+        CanApplyNotch = false;
+        IsRecordingNotch = false;
+        StatusText = "Notch cancelled";
+        Console.WriteLine("[VIEWMODEL] Notch cancelled");
+
+        // Update visualization to clear notch points
+        _visualizationControl?.SetNotchPoints(NotchPoints);
+    }
+
+    private class BoundaryCrossing
+    {
+        public int SegmentIndex { get; set; }
+        public BoundaryPoint CrossingPoint { get; set; } = new BoundaryPoint(0, 0, 0);
+    }
+
+    private class BoundaryCrossingWithNotchIndex
+    {
+        public int BoundarySegmentIndex { get; set; }
+        public int NotchSegmentIndex { get; set; }
+        public BoundaryPoint CrossingPoint { get; set; } = new BoundaryPoint(0, 0, 0);
+    }
+
+    private List<BoundaryCrossing> FindBoundaryCrossings(List<BoundaryPoint> notchPath)
+    {
+        var crossings = new List<BoundaryCrossing>();
+
+        if (_currentField?.Boundary?.OuterBoundary == null || notchPath.Count < 2)
+        {
+            return crossings;
+        }
+
+        var boundaryPoints = _currentField.Boundary.OuterBoundary.Points;
+
+        // Check each segment of the notch path against each segment of the boundary
+        for (int i = 0; i < notchPath.Count - 1; i++)
+        {
+            var notchP1 = notchPath[i];
+            var notchP2 = notchPath[i + 1];
+
+            for (int j = 0; j < boundaryPoints.Count; j++)
+            {
+                var boundaryP1 = boundaryPoints[j];
+                var boundaryP2 = boundaryPoints[(j + 1) % boundaryPoints.Count];
+
+                if (LineSegmentsIntersect(notchP1, notchP2, boundaryP1, boundaryP2, out var intersection))
+                {
+                    crossings.Add(new BoundaryCrossing
+                    {
+                        SegmentIndex = j,
+                        CrossingPoint = intersection
+                    });
+                }
+            }
+        }
+
+        return crossings;
+    }
+
+    private List<BoundaryCrossingWithNotchIndex> FindBoundaryCrossingsWithNotchIndex(List<BoundaryPoint> notchPath)
+    {
+        var crossings = new List<BoundaryCrossingWithNotchIndex>();
+
+        if (_currentField?.Boundary?.OuterBoundary == null || notchPath.Count < 2)
+        {
+            return crossings;
+        }
+
+        var boundaryPoints = _currentField.Boundary.OuterBoundary.Points;
+
+        // Check each segment of the notch path against each segment of the boundary
+        for (int i = 0; i < notchPath.Count - 1; i++)
+        {
+            var notchP1 = notchPath[i];
+            var notchP2 = notchPath[i + 1];
+
+            for (int j = 0; j < boundaryPoints.Count; j++)
+            {
+                var boundaryP1 = boundaryPoints[j];
+                var boundaryP2 = boundaryPoints[(j + 1) % boundaryPoints.Count];
+
+                if (LineSegmentsIntersect(notchP1, notchP2, boundaryP1, boundaryP2, out var intersection))
+                {
+                    crossings.Add(new BoundaryCrossingWithNotchIndex
+                    {
+                        BoundarySegmentIndex = j,
+                        NotchSegmentIndex = i,
+                        CrossingPoint = intersection
+                    });
+                }
+            }
+        }
+
+        return crossings;
+    }
+
+    private bool LineSegmentsIntersect(BoundaryPoint p1, BoundaryPoint p2, BoundaryPoint p3, BoundaryPoint p4, out BoundaryPoint intersection)
+    {
+        intersection = new BoundaryPoint(0, 0, 0);
+
+        double x1 = p1.Easting, y1 = p1.Northing;
+        double x2 = p2.Easting, y2 = p2.Northing;
+        double x3 = p3.Easting, y3 = p3.Northing;
+        double x4 = p4.Easting, y4 = p4.Northing;
+
+        double denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+        if (Math.Abs(denom) < 0.001) return false; // Parallel lines
+
+        double t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom;
+        double u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom;
+
+        if (t >= 0 && t <= 1 && u >= 0 && u <= 1)
+        {
+            // Intersection found
+            double x = x1 + t * (x2 - x1);
+            double y = y1 + t * (y2 - y1);
+            intersection = new BoundaryPoint(x, y, 0);
+            return true;
+        }
+
+        return false;
     }
 
     private void OnConnectionStatusChanged(object? sender, bool isConnected)

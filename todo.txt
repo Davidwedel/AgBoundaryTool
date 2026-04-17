@@ -1,0 +1,4 @@
+split field
+marker lines
+when panned, snap to center
+delete points

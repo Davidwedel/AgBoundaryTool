@@ -18,6 +18,7 @@ namespace AgBoundaryTool.Views.Controls;
 public class BoundaryVisualizationControl : Control
 {
     private List<BoundaryPoint> _boundaryPoints = new List<BoundaryPoint>();
+    private List<BoundaryPoint> _notchPoints = new List<BoundaryPoint>();
     private Position? _vehiclePosition;
     private double _zoom = 1.0;
     private Point _offset = new Point(0, 0);
@@ -27,6 +28,7 @@ public class BoundaryVisualizationControl : Control
     // Panning state
     private bool _isPanning = false;
     private Point _panStartPoint;
+    private bool _manualPanActive = false; // User has manually panned, disable auto-center
 
     // Visual settings
     private const double GridSize = 50.0; // meters
@@ -38,16 +40,19 @@ public class BoundaryVisualizationControl : Control
     private readonly SolidColorBrush _gridBrush = new SolidColorBrush(Color.FromArgb(40, 128, 128, 128));
     private readonly SolidColorBrush _boundaryBrush = new SolidColorBrush(Color.FromRgb(0, 200, 0));
     private readonly SolidColorBrush _vehicleBrush = new SolidColorBrush(Color.FromRgb(255, 0, 0));
+    private readonly SolidColorBrush _notchBrush = new SolidColorBrush(Color.FromRgb(200, 0, 200)); // Purple/Magenta
     private readonly SolidColorBrush _backgroundBrush = new SolidColorBrush(Color.FromRgb(40, 40, 40));
     private readonly Pen _gridPen;
     private readonly Pen _boundaryPen;
     private readonly Pen _vehiclePen;
+    private readonly Pen _notchPen;
 
     public BoundaryVisualizationControl()
     {
         _gridPen = new Pen(_gridBrush, 1.0);
         _boundaryPen = new Pen(_boundaryBrush, LineThickness);
         _vehiclePen = new Pen(_vehicleBrush, 2.0);
+        _notchPen = new Pen(_notchBrush, LineThickness + 1);
 
         // Update on data changes
         ClipToBounds = true;
@@ -98,6 +103,48 @@ public class BoundaryVisualizationControl : Control
         }
     }
 
+    private void OnPointerPressed(object? sender, Avalonia.Input.PointerPressedEventArgs e)
+    {
+        // Start panning on left mouse button
+        var properties = e.GetCurrentPoint(this).Properties;
+        if (properties.IsLeftButtonPressed)
+        {
+            _isPanning = true;
+            _panStartPoint = e.GetPosition(this);
+            e.Handled = true;
+        }
+    }
+
+    private void OnPointerMoved(object? sender, Avalonia.Input.PointerEventArgs e)
+    {
+        if (_isPanning)
+        {
+            var currentPos = e.GetPosition(this);
+            var delta = currentPos - _panStartPoint;
+
+            // Update offset by the drag delta
+            _offset = new Point(_offset.X + delta.X, _offset.Y + delta.Y);
+
+            // Update start point for next move
+            _panStartPoint = currentPos;
+
+            // Disable auto-centering once user has manually panned
+            _manualPanActive = true;
+
+            InvalidateVisual();
+            e.Handled = true;
+        }
+    }
+
+    private void OnPointerReleased(object? sender, Avalonia.Input.PointerReleasedEventArgs e)
+    {
+        if (_isPanning)
+        {
+            _isPanning = false;
+            e.Handled = true;
+        }
+    }
+
     /// <summary>
     /// Set boundary points to visualize
     /// </summary>
@@ -108,8 +155,19 @@ public class BoundaryVisualizationControl : Control
         if (_autoZoom && _boundaryPoints.Count > 0)
         {
             AutoZoomToBoundary();
+            // Reset manual pan when auto-zooming to boundary
+            _manualPanActive = false;
         }
 
+        Dispatcher.UIThread.Post(InvalidateVisual, DispatcherPriority.Render);
+    }
+
+    /// <summary>
+    /// Set notch points to visualize
+    /// </summary>
+    public void SetNotchPoints(IEnumerable<BoundaryPoint> points)
+    {
+        _notchPoints = points.ToList();
         Dispatcher.UIThread.Post(InvalidateVisual, DispatcherPriority.Render);
     }
 
@@ -137,8 +195,11 @@ public class BoundaryVisualizationControl : Control
             Console.WriteLine($"[VISUALIZATION] SetVehiclePosition #{_vehicleUpdateCount}: E={easting:F2}, N={northing:F2}, Heading={position.Heading:F1}°");
         }
 
-        // Always center camera on vehicle (grid moves, vehicle stays centered)
-        CenterOnVehicle();
+        // Center camera on vehicle only if user hasn't manually panned
+        if (!_manualPanActive)
+        {
+            CenterOnVehicle();
+        }
 
         Dispatcher.UIThread.Post(InvalidateVisual, DispatcherPriority.Render);
     }
@@ -150,6 +211,7 @@ public class BoundaryVisualizationControl : Control
     {
         _boundaryPoints.Clear();
         _vehiclePosition = null;
+        _manualPanActive = false; // Reset manual pan flag
         Dispatcher.UIThread.Post(InvalidateVisual);
     }
 
@@ -226,6 +288,9 @@ public class BoundaryVisualizationControl : Control
         // Draw boundary
         DrawBoundary(context);
 
+        // Draw notch points
+        DrawNotchPoints(context);
+
         // Draw vehicle crosshair
         DrawVehicle(context);
 
@@ -281,6 +346,35 @@ public class BoundaryVisualizationControl : Control
                 new Rect(screenPos.X - PointRadius / 2, screenPos.Y - PointRadius / 2,
                          PointRadius, PointRadius)
             );
+        }
+    }
+
+    private void DrawNotchPoints(DrawingContext context)
+    {
+        if (_notchPoints.Count < 1) return;
+
+        // Draw notch lines
+        for (int i = 0; i < _notchPoints.Count - 1; i++)
+        {
+            var p1 = _notchPoints[i];
+            var p2 = _notchPoints[i + 1];
+
+            var screen1 = WorldToScreen(p1.Easting, p1.Northing);
+            var screen2 = WorldToScreen(p2.Easting, p2.Northing);
+
+            context.DrawLine(_notchPen, screen1, screen2);
+        }
+
+        // Draw notch points (larger and more visible)
+        foreach (var point in _notchPoints)
+        {
+            var screenPos = WorldToScreen(point.Easting, point.Northing);
+
+            // Draw as circle instead of rectangle
+            var circle = new EllipseGeometry(new Rect(
+                screenPos.X - PointRadius, screenPos.Y - PointRadius,
+                PointRadius * 2, PointRadius * 2));
+            context.DrawGeometry(_notchBrush, _notchPen, circle);
         }
     }
 
