@@ -95,8 +95,8 @@ The notch feature uses TWO dialogs in sequence:
 Inner boundaries (holes/exclusions like ponds) can be modified with TWO operations:
 
 **Operations:**
-- **Notch**: Cut into inner boundary (makes hole bigger)
-- **Bulge**: Expand inner boundary outward (makes hole smaller)
+- **Notch**: Cut into inner boundary (makes hole smaller - adds farmable area)
+- **Bulge**: Expand inner boundary outward (makes hole bigger - reduces farmable area)
 
 The feature uses THREE dialogs in sequence:
 1. **InnerBoundaryModifyDialog** - Select which inner boundary and operation (notch/bulge)
@@ -110,9 +110,9 @@ The feature uses THREE dialogs in sequence:
 
 **Algorithm:**
 - Finds crossings between modification path and target inner boundary
-- Sorts crossings by boundary segment index
-- For notch: Inserts modification path points (forward traversal)
-- For bulge: Inserts modification path points (reverse traversal)
+- Groups crossings into pairs, sorts by boundary position
+- For notch (hole smaller): Uses opposite reversal logic from outer boundary
+- For bulge (hole bigger): Uses same reversal logic as outer boundary notch
 - Updates only the target inner boundary
 
 ## Visualization
