@@ -120,6 +120,22 @@ public partial class MainWindowViewModel : ViewModelBase
 
         Console.WriteLine("[VIEWMODEL] Settings loaded");
         Console.WriteLine($"[VIEWMODEL] Simulator was running: {settings.SimulatorWasRunning}");
+        Console.WriteLine($"[VIEWMODEL] Last field: {settings.LastFieldName}");
+
+        // Auto-load last field if available
+        if (!string.IsNullOrEmpty(settings.LastFieldName))
+        {
+            var lastFieldPath = Path.Combine(settings.FieldsDirectory, settings.LastFieldName);
+            if (Directory.Exists(lastFieldPath))
+            {
+                Console.WriteLine($"[VIEWMODEL] Auto-loading last field: {settings.LastFieldName}");
+                Dispatcher.UIThread.Post(() => LoadFieldByPath(lastFieldPath), DispatcherPriority.Background);
+            }
+            else
+            {
+                Console.WriteLine($"[VIEWMODEL] Last field not found: {lastFieldPath}");
+            }
+        }
 
         // Auto-start simulator if it was running last time
         if (settings.SimulatorWasRunning)
@@ -247,6 +263,9 @@ public partial class MainWindowViewModel : ViewModelBase
         _temporaryOrigin = null;
 
         StatusText = $"Created field '{FieldName}' at {_currentField.Origin.Latitude:F6}, {_currentField.Origin.Longitude:F6}";
+
+        // Save to settings
+        SaveSettings();
     }
 
     [RelayCommand]
@@ -332,8 +351,111 @@ public partial class MainWindowViewModel : ViewModelBase
     [RelayCommand]
     private void LoadField()
     {
-        // TODO: Implement field browser dialog
-        StatusText = "Load field not yet implemented";
+        // Simple field loader - lists all fields in field directory and prompts user to select
+        try
+        {
+            if (!Directory.Exists(FieldDirectory))
+            {
+                StatusText = "Fields directory does not exist";
+                return;
+            }
+
+            var fieldDirectories = Directory.GetDirectories(FieldDirectory);
+            if (fieldDirectories.Length == 0)
+            {
+                StatusText = "No fields found";
+                return;
+            }
+
+            // Get field names
+            var fieldNames = fieldDirectories.Select(d => Path.GetFileName(d)).ToArray();
+
+            // For now, just load the first field found (TODO: add proper dialog)
+            // In a real implementation, we'd show a selection dialog here
+            var fieldName = fieldNames[0];
+            var fieldPath = Path.Combine(FieldDirectory, fieldName);
+
+            LoadFieldByPath(fieldPath);
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Error loading field: {ex.Message}";
+            Console.WriteLine($"[VIEWMODEL] Load field error: {ex.Message}");
+        }
+    }
+
+    private void LoadFieldByPath(string fieldPath)
+    {
+        try
+        {
+            var fieldName = Path.GetFileName(fieldPath);
+            Console.WriteLine($"[VIEWMODEL] Loading field: {fieldName} from {fieldPath}");
+
+            // Load field data
+            var field = FieldPlaneFileService.LoadField(fieldPath);
+            if (field == null)
+            {
+                StatusText = $"Failed to load field '{fieldName}'";
+                return;
+            }
+
+            // Load boundary if exists
+            var boundary = BoundaryFileService.LoadBoundary(fieldPath);
+            field.Boundary = boundary;
+
+            _currentField = field;
+            FieldName = field.Name;
+
+            // Clear temporary origin since we now have a field
+            _temporaryOrigin = null;
+
+            // Snap simulator to field origin if simulator is running
+            if (IsSimulatorMode && _gpsService.Simulator != null && field.Origin != null)
+            {
+                Console.WriteLine($"[VIEWMODEL] Snapping simulator to field origin: {field.Origin.Latitude:F6}, {field.Origin.Longitude:F6}");
+
+                // Stop current simulator
+                _gpsService.StopSimulator();
+
+                // Update simulator position
+                SimulatorLatitude = field.Origin.Latitude;
+                SimulatorLongitude = field.Origin.Longitude;
+
+                // Restart simulator at new position
+                _gpsService.StartSimulator(SimulatorLatitude, SimulatorLongitude);
+                IsSimulatorMode = true;
+            }
+
+            // Update visualization with boundary
+            if (field.Boundary?.OuterBoundary != null && field.Boundary.OuterBoundary.IsValid)
+            {
+                BoundaryPoints.Clear();
+                foreach (var point in field.Boundary.OuterBoundary.Points)
+                {
+                    BoundaryPoints.Add(point);
+                }
+                _visualizationControl?.SetBoundaryPoints(BoundaryPoints);
+
+                StatusText = $"Loaded field '{field.Name}' with {BoundaryPoints.Count} boundary points";
+                Console.WriteLine($"[VIEWMODEL] Field loaded: {BoundaryPoints.Count} points, Area: {field.Boundary.OuterBoundary.AreaHectares:F2} ha");
+            }
+            else
+            {
+                StatusText = $"Loaded field '{field.Name}' (no boundary)";
+                Console.WriteLine($"[VIEWMODEL] Field loaded: no boundary");
+            }
+
+            // Update point count
+            PointCount = BoundaryPoints.Count;
+
+            // Save to settings
+            SaveSettings();
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Error loading field: {ex.Message}";
+            Console.WriteLine($"[VIEWMODEL] Load field error: {ex.Message}");
+        }
     }
 
     [RelayCommand]
@@ -357,6 +479,75 @@ public partial class MainWindowViewModel : ViewModelBase
         catch (Exception ex)
         {
             StatusText = $"Error saving field: {ex.Message}";
+        }
+    }
+
+    [RelayCommand]
+    private void CloseField()
+    {
+        if (_currentField == null)
+        {
+            StatusText = "No field is open";
+            return;
+        }
+
+        var fieldName = _currentField.Name;
+
+        // Clear current field
+        _currentField = null;
+        FieldName = "NewField";
+
+        // Clear boundary points
+        BoundaryPoints.Clear();
+        PointCount = 0;
+        BoundaryArea = 0;
+
+        // Clear visualization
+        _visualizationControl?.SetBoundaryPoints(BoundaryPoints);
+
+        StatusText = $"Closed field '{fieldName}'";
+        Console.WriteLine($"[VIEWMODEL] Closed field: {fieldName}");
+
+        // Save settings to clear last field
+        SaveSettings();
+    }
+
+    [RelayCommand]
+    private async Task ImportField()
+    {
+        try
+        {
+            // Use Avalonia's folder picker
+            var topLevel = Avalonia.Application.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
+                ? desktop.MainWindow
+                : null;
+
+            if (topLevel == null)
+            {
+                StatusText = "Cannot open folder picker";
+                return;
+            }
+
+            var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new Avalonia.Platform.Storage.FolderPickerOpenOptions
+            {
+                Title = "Select Field Directory to Import",
+                AllowMultiple = false
+            });
+
+            if (folders.Count > 0)
+            {
+                var selectedPath = folders[0].Path.LocalPath;
+                if (!string.IsNullOrEmpty(selectedPath))
+                {
+                    Console.WriteLine($"[VIEWMODEL] Importing field from: {selectedPath}");
+                    LoadFieldByPath(selectedPath);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Error importing field: {ex.Message}";
+            Console.WriteLine($"[VIEWMODEL] Import field error: {ex.Message}");
         }
     }
 
