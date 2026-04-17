@@ -24,6 +24,10 @@ public class BoundaryVisualizationControl : Control
     private bool _autoZoom = true;
     private int _vehicleUpdateCount = 0;
 
+    // Panning state
+    private bool _isPanning = false;
+    private Point _panStartPoint;
+
     // Visual settings
     private const double GridSize = 50.0; // meters
     private const double CrosshairSize = 20.0; // pixels
@@ -50,6 +54,11 @@ public class BoundaryVisualizationControl : Control
 
         // Enable mouse wheel zoom
         this.PointerWheelChanged += OnPointerWheelChanged;
+
+        // Enable panning
+        this.PointerPressed += OnPointerPressed;
+        this.PointerMoved += OnPointerMoved;
+        this.PointerReleased += OnPointerReleased;
     }
 
     private void OnPointerWheelChanged(object? sender, Avalonia.Input.PointerWheelEventArgs e)

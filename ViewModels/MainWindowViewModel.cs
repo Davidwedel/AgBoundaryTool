@@ -506,7 +506,7 @@ public partial class MainWindowViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void SaveField()
+    private async Task SaveFieldAs()
     {
         if (_currentField == null)
         {
@@ -514,18 +514,86 @@ public partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
+        if (string.IsNullOrWhiteSpace(FieldName))
+        {
+            StatusText = "Please enter a field name";
+            return;
+        }
+
         try
         {
-            FieldPlaneFileService.SaveField(_currentField, _currentField.DirectoryPath);
-            if (_currentField.Boundary != null)
+            // Use Avalonia's folder picker to select parent directory where field folder will be created
+            var topLevel = Avalonia.Application.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
+                ? desktop.MainWindow
+                : null;
+
+            if (topLevel == null)
             {
-                BoundaryFileService.SaveBoundary(_currentField.Boundary, _currentField.DirectoryPath);
+                StatusText = "Cannot open folder picker";
+                return;
             }
-            StatusText = $"Field '{_currentField.Name}' saved";
+
+            // Get suggested start location (fields directory)
+            var startFolder = await topLevel.StorageProvider.TryGetFolderFromPathAsync(new Uri(FieldDirectory));
+
+            var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new Avalonia.Platform.Storage.FolderPickerOpenOptions
+            {
+                Title = $"Select Directory to Save Field '{FieldName}'",
+                AllowMultiple = false,
+                SuggestedStartLocation = startFolder
+            });
+
+            if (folders.Count > 0)
+            {
+                var parentPath = folders[0].Path.LocalPath;
+                if (!string.IsNullOrEmpty(parentPath))
+                {
+                    // Create field directory in selected parent location
+                    var newFieldPath = Path.Combine(parentPath, FieldName);
+
+                    Console.WriteLine($"[VIEWMODEL] Saving field to: {newFieldPath}");
+
+                    // Check if directory already exists
+                    if (Directory.Exists(newFieldPath))
+                    {
+                        StatusText = $"Field '{FieldName}' already exists at {newFieldPath}";
+                        Console.WriteLine($"[VIEWMODEL] Field already exists, overwriting...");
+                    }
+                    else
+                    {
+                        Directory.CreateDirectory(newFieldPath);
+                    }
+
+                    // Update field name and directory path
+                    _currentField.Name = FieldName;
+                    _currentField.DirectoryPath = newFieldPath;
+
+                    // Save field to new location
+                    FieldPlaneFileService.SaveField(_currentField, newFieldPath);
+                    Console.WriteLine($"[VIEWMODEL] Saved Field.txt to {newFieldPath}");
+
+                    if (_currentField.Boundary != null)
+                    {
+                        BoundaryFileService.SaveBoundary(_currentField.Boundary, newFieldPath);
+                        Console.WriteLine($"[VIEWMODEL] Saved Boundary.txt to {newFieldPath}");
+                    }
+
+                    StatusText = $"Field '{FieldName}' saved to {newFieldPath}";
+                    Console.WriteLine($"[VIEWMODEL] Field save complete");
+
+                    // Save to settings
+                    SaveSettings();
+                }
+            }
+            else
+            {
+                StatusText = "Save cancelled";
+            }
         }
         catch (Exception ex)
         {
             StatusText = $"Error saving field: {ex.Message}";
+            Console.WriteLine($"[VIEWMODEL] Save field as error: {ex.Message}");
         }
     }
 
