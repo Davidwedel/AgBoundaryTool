@@ -84,6 +84,9 @@ public class BoundaryVisualizationControl : Control
     // Event for notifying when points should be deleted
     public event EventHandler<List<int>>? PointsDeleteRequested;
 
+    // Event for notifying when vehicle should be snapped to a position (right-click)
+    public event EventHandler<(double easting, double northing)>? VehicleSnapRequested;
+
     private void OnPointerWheelChanged(object? sender, Avalonia.Input.PointerWheelEventArgs e)
     {
         // Get wheel delta (positive = zoom in, negative = zoom out)
@@ -124,7 +127,23 @@ public class BoundaryVisualizationControl : Control
     private void OnPointerPressed(object? sender, Avalonia.Input.PointerPressedEventArgs e)
     {
         var properties = e.GetCurrentPoint(this).Properties;
-        if (properties.IsLeftButtonPressed)
+
+        if (properties.IsRightButtonPressed)
+        {
+            // Right-click: Snap vehicle to clicked location
+            var mousePos = e.GetPosition(this);
+
+            // Convert screen coordinates to world coordinates
+            double worldX = (mousePos.X - _offset.X) / _zoom;
+            double worldY = (mousePos.Y - _offset.Y) / -_zoom; // Negative because Y is inverted
+
+            // Fire event to notify that vehicle should be snapped
+            VehicleSnapRequested?.Invoke(this, (worldX, worldY));
+
+            Console.WriteLine($"[VISUALIZATION] Right-click snap requested: E={worldX:F2}, N={worldY:F2}");
+            e.Handled = true;
+        }
+        else if (properties.IsLeftButtonPressed)
         {
             var mousePos = e.GetPosition(this);
             var modifiers = e.KeyModifiers;

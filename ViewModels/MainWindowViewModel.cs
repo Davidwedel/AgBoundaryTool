@@ -1085,6 +1085,53 @@ public partial class MainWindowViewModel : ViewModelBase
 
         // Subscribe to point deletion requests
         _visualizationControl.PointsDeleteRequested += OnPointsDeleteRequested;
+
+        // Subscribe to vehicle snap requests (right-click)
+        _visualizationControl.VehicleSnapRequested += OnVehicleSnapRequested;
+    }
+
+    private void OnVehicleSnapRequested(object? sender, (double easting, double northing) localCoords)
+    {
+        if (!IsSimulatorMode || _gpsService.Simulator == null)
+        {
+            StatusText = "Vehicle snap only works in simulator mode";
+            return;
+        }
+
+        // Get the origin (field or temporary)
+        Position origin;
+        if (_currentField != null)
+        {
+            origin = _currentField.Origin;
+        }
+        else if (_temporaryOrigin != null)
+        {
+            origin = _temporaryOrigin;
+        }
+        else
+        {
+            StatusText = "No origin set - cannot snap vehicle";
+            return;
+        }
+
+        // Convert local coordinates to GPS coordinates
+        var (lat, lon) = CoordinateConversionService.ToGlobal(localCoords.easting, localCoords.northing, origin);
+
+        // Update simulator position
+        var newPosition = new Position
+        {
+            Latitude = lat,
+            Longitude = lon,
+            Altitude = 200,
+            FixQuality = 4,
+            SatelliteCount = 12
+        };
+
+        // Reinitialize simulator at new position
+        _gpsService.Simulator.Initialize(newPosition);
+
+        StatusText = $"Vehicle snapped to E={localCoords.easting:F2}, N={localCoords.northing:F2}";
+        Console.WriteLine($"[VIEWMODEL] Vehicle snapped to {lat:F6}, {lon:F6}");
     }
 
     private void OnPointsDeleteRequested(object? sender, List<int> indices)
@@ -1298,40 +1345,82 @@ public partial class MainWindowViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void SimulatorAccelerateForward()
+    private void SimulatorSpeedUp()
     {
         if (_gpsService.Simulator != null)
         {
-            // Toggle forward acceleration
-            _gpsService.Simulator.IsAcceleratingForward = !_gpsService.Simulator.IsAcceleratingForward;
-            if (_gpsService.Simulator.IsAcceleratingForward)
+            // Get current speed in mph
+            double currentSpeedKmh = _gpsService.Simulator.SpeedKmh;
+            double currentSpeedMph = currentSpeedKmh * 0.621371;
+
+            // Variable increment based on current speed
+            // 1 mph ≈ 0.04 stepDistance
+            double increment;
+            if (Math.Abs(currentSpeedMph) < 10)
             {
-                _gpsService.Simulator.IsAcceleratingBackward = false;
-                StatusText = "Accelerating forward...";
+                // At low speeds (0-10 mph): increment by 1 mph
+                increment = 0.04;
+            }
+            else if (Math.Abs(currentSpeedMph) < 20)
+            {
+                // At medium speeds (10-20 mph): increment by 2 mph
+                increment = 0.08;
             }
             else
             {
-                StatusText = "Coasting...";
+                // At high speeds (20+ mph): increment by 3 mph
+                increment = 0.12;
             }
+
+            // Increase speed
+            _gpsService.Simulator.StepDistance += increment;
+
+            // Clamp to max forward speed (25 km/h ≈ 15.5 mph)
+            if (_gpsService.Simulator.StepDistance > 0.625)
+                _gpsService.Simulator.StepDistance = 0.625;
+
+            double newSpeedMph = _gpsService.Simulator.SpeedKmh * 0.621371;
+            StatusText = $"Speed: {newSpeedMph:F1} mph ({_gpsService.Simulator.SpeedKmh:F1} km/h)";
         }
     }
 
     [RelayCommand]
-    private void SimulatorAccelerateBackward()
+    private void SimulatorSlowDown()
     {
         if (_gpsService.Simulator != null)
         {
-            // Toggle backward acceleration
-            _gpsService.Simulator.IsAcceleratingBackward = !_gpsService.Simulator.IsAcceleratingBackward;
-            if (_gpsService.Simulator.IsAcceleratingBackward)
+            // Get current speed in mph
+            double currentSpeedKmh = _gpsService.Simulator.SpeedKmh;
+            double currentSpeedMph = currentSpeedKmh * 0.621371;
+
+            // Variable increment based on current speed
+            // 1 mph ≈ 0.04 stepDistance
+            double decrement;
+            if (Math.Abs(currentSpeedMph) < 10)
             {
-                _gpsService.Simulator.IsAcceleratingForward = false;
-                StatusText = "Reversing...";
+                // At low speeds (0-10 mph): decrement by 1 mph
+                decrement = 0.04;
+            }
+            else if (Math.Abs(currentSpeedMph) < 20)
+            {
+                // At medium speeds (10-20 mph): decrement by 2 mph
+                decrement = 0.08;
             }
             else
             {
-                StatusText = "Coasting...";
+                // At high speeds (20+ mph): decrement by 3 mph
+                decrement = 0.12;
             }
+
+            // Decrease speed
+            _gpsService.Simulator.StepDistance -= decrement;
+
+            // Clamp to max reverse speed (-10 km/h ≈ -6.2 mph)
+            if (_gpsService.Simulator.StepDistance < -0.25)
+                _gpsService.Simulator.StepDistance = -0.25;
+
+            double newSpeedMph = _gpsService.Simulator.SpeedKmh * 0.621371;
+            StatusText = $"Speed: {newSpeedMph:F1} mph ({_gpsService.Simulator.SpeedKmh:F1} km/h)";
         }
     }
 
@@ -1344,6 +1433,19 @@ public partial class MainWindowViewModel : ViewModelBase
             _gpsService.Simulator.IsAcceleratingBackward = false;
             _gpsService.Simulator.StepDistance = 0; // Stop instantly, no coast
             StatusText = "Stopped";
+        }
+    }
+
+    [RelayCommand]
+    private void SimulatorReverseDirection()
+    {
+        if (_gpsService.Simulator != null)
+        {
+            // Reverse heading by 180 degrees
+            double currentHeading = _gpsService.Simulator.HeadingDegrees;
+            double newHeading = (currentHeading + 180) % 360;
+            _gpsService.Simulator.SetHeading(newHeading);
+            StatusText = $"Reversed direction - Heading: {newHeading:F1}°";
         }
     }
 
