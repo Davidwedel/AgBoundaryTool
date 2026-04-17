@@ -931,18 +931,43 @@ public partial class MainWindowViewModel : ViewModelBase
 
         // Check if notch path crosses boundary
         var crossings = FindBoundaryCrossings(NotchPoints.ToList());
-        CanApplyNotch = crossings.Count >= 2;
 
-        if (CanApplyNotch)
-        {
-            StatusText = $"Notch recorded: {NotchPoints.Count} points, {crossings.Count} boundary crossings";
-            Console.WriteLine($"[VIEWMODEL] Notch recording stopped. Found {crossings.Count} crossings");
-        }
-        else
+        if (crossings.Count < 2)
         {
             StatusText = "Notch must cross boundary at least twice";
+            CanApplyNotch = false;
             Console.WriteLine("[VIEWMODEL] Notch recording stopped but not enough crossings");
+            return;
         }
+
+        // Check if we have an even number of crossings (pairs of in/out)
+        if (crossings.Count % 2 != 0)
+        {
+            StatusText = $"Invalid notch: Found {crossings.Count} crossings (must be even number)";
+            CanApplyNotch = false;
+            Console.WriteLine($"[VIEWMODEL] Notch invalid: odd number of crossings ({crossings.Count})");
+            return;
+        }
+
+        // Check if both ends of the notch are outside the boundary
+        var firstPoint = NotchPoints[0];
+        var lastPoint = NotchPoints[NotchPoints.Count - 1];
+
+        bool firstOutside = !IsPointInsideBoundary(firstPoint);
+        bool lastOutside = !IsPointInsideBoundary(lastPoint);
+
+        if (!firstOutside || !lastOutside)
+        {
+            StatusText = "Invalid notch: Both start and end points must be outside the boundary";
+            CanApplyNotch = false;
+            Console.WriteLine($"[VIEWMODEL] Notch invalid: start outside={firstOutside}, end outside={lastOutside}");
+            return;
+        }
+
+        int numNotches = crossings.Count / 2;
+        CanApplyNotch = true;
+        StatusText = $"Notch recorded: {NotchPoints.Count} points, {crossings.Count} crossings, {numNotches} notch(es)";
+        Console.WriteLine($"[VIEWMODEL] Notch recording stopped. Found {crossings.Count} crossings ({numNotches} notches), both ends outside boundary");
     }
 
     [RelayCommand]
@@ -955,77 +980,93 @@ public partial class MainWindowViewModel : ViewModelBase
 
         try
         {
-            var crossingsWithNotchIndex = FindBoundaryCrossingsWithNotchIndex(NotchPoints.ToList());
-            if (crossingsWithNotchIndex.Count < 2)
+            var allCrossings = FindBoundaryCrossingsWithNotchIndex(NotchPoints.ToList());
+            if (allCrossings.Count < 2 || allCrossings.Count % 2 != 0)
             {
-                StatusText = "Cannot apply notch - must cross boundary at least twice";
+                StatusText = "Cannot apply notch - must have even number of crossings";
                 return;
             }
 
-            // Get first two crossings (in chronological order - order they were crossed in time)
-            var crossing1 = crossingsWithNotchIndex[0];
-            var crossing2 = crossingsWithNotchIndex[1];
+            int numNotches = allCrossings.Count / 2;
+            Console.WriteLine($"[VIEWMODEL] Applying {numNotches} notch(es) from {allCrossings.Count} crossings");
 
-            Console.WriteLine($"[VIEWMODEL] Applying notch between crossings at boundary segment {crossing1.BoundarySegmentIndex} and {crossing2.BoundarySegmentIndex}");
-            Console.WriteLine($"[VIEWMODEL] Crossing 1 (time): E={crossing1.CrossingPoint.Easting:F2}, N={crossing1.CrossingPoint.Northing:F2}, notch index={crossing1.NotchSegmentIndex}");
-            Console.WriteLine($"[VIEWMODEL] Crossing 2 (time): E={crossing2.CrossingPoint.Easting:F2}, N={crossing2.CrossingPoint.Northing:F2}, notch index={crossing2.NotchSegmentIndex}");
+            // Group crossings into pairs (crossing 0-1 = notch 1, crossing 2-3 = notch 2, etc.)
+            var notchPairs = new List<(BoundaryCrossingWithNotchIndex first, BoundaryCrossingWithNotchIndex second)>();
+            for (int i = 0; i < allCrossings.Count; i += 2)
+            {
+                notchPairs.Add((allCrossings[i], allCrossings[i + 1]));
+                Console.WriteLine($"[VIEWMODEL] Notch pair {i/2 + 1}: crossings {i} and {i+1}");
+            }
 
-            // Build new boundary with notch inserted at intersection points
+            // Sort pairs by boundary segment index so we can process them in order
+            var sortedPairs = notchPairs
+                .Select((pair, index) => new {
+                    PairIndex = index,
+                    FirstBoundaryIdx = Math.Min(pair.first.BoundarySegmentIndex, pair.second.BoundarySegmentIndex),
+                    SecondBoundaryIdx = Math.Max(pair.first.BoundarySegmentIndex, pair.second.BoundarySegmentIndex),
+                    FirstCrossing = pair.first.BoundarySegmentIndex <= pair.second.BoundarySegmentIndex ? pair.first : pair.second,
+                    SecondCrossing = pair.first.BoundarySegmentIndex <= pair.second.BoundarySegmentIndex ? pair.second : pair.first,
+                    ChronologicalFirst = pair.first,
+                    ChronologicalSecond = pair.second
+                })
+                .OrderBy(p => p.FirstBoundaryIdx)
+                .ToList();
+
+            // Build new boundary by walking through old boundary and inserting notches
             var oldBoundary = _currentField.Boundary.OuterBoundary.Points;
             var newBoundary = new List<BoundaryPoint>();
+            int currentBoundaryIdx = 0;
+            int currentPairIdx = 0;
 
-            // Determine which crossing comes first/second in the boundary (spatially, not temporally)
-            int firstBoundaryIdx = Math.Min(crossing1.BoundarySegmentIndex, crossing2.BoundarySegmentIndex);
-            int secondBoundaryIdx = Math.Max(crossing1.BoundarySegmentIndex, crossing2.BoundarySegmentIndex);
-
-            // Keep track of which crossing (chronologically) corresponds to which boundary position
-            var firstBoundaryCrossing = crossing1.BoundarySegmentIndex <= crossing2.BoundarySegmentIndex ? crossing1 : crossing2;
-            var secondBoundaryCrossing = crossing1.BoundarySegmentIndex <= crossing2.BoundarySegmentIndex ? crossing2 : crossing1;
-
-            // Add boundary points up to first boundary crossing
-            for (int i = 0; i <= firstBoundaryIdx; i++)
+            while (currentBoundaryIdx < oldBoundary.Count)
             {
-                newBoundary.Add(oldBoundary[i]);
-            }
-
-            // Add first boundary intersection point
-            newBoundary.Add(firstBoundaryCrossing.CrossingPoint);
-
-            // Add the notch points between the chronological first and second crossings
-            // Use crossing1 and crossing2 (chronological order) to get the notch segment
-            int startNotchIdx = Math.Min(crossing1.NotchSegmentIndex, crossing2.NotchSegmentIndex);
-            int endNotchIdx = Math.Max(crossing1.NotchSegmentIndex, crossing2.NotchSegmentIndex);
-
-            Console.WriteLine($"[VIEWMODEL] Adding notch points from index {startNotchIdx} to {endNotchIdx}");
-
-            var notchPointsToAdd = new List<BoundaryPoint>();
-            for (int i = startNotchIdx + 1; i <= endNotchIdx; i++)
-            {
-                if (i < NotchPoints.Count)
+                // Check if we're at a notch insertion point
+                if (currentPairIdx < sortedPairs.Count &&
+                    currentBoundaryIdx == sortedPairs[currentPairIdx].FirstBoundaryIdx)
                 {
-                    notchPointsToAdd.Add(NotchPoints[i]);
+                    var pair = sortedPairs[currentPairIdx];
+                    Console.WriteLine($"[VIEWMODEL] Processing notch {currentPairIdx + 1} at boundary index {currentBoundaryIdx}");
+
+                    // Add boundary points up to this crossing
+                    newBoundary.Add(oldBoundary[currentBoundaryIdx]);
+
+                    // Add first intersection point
+                    newBoundary.Add(pair.FirstCrossing.CrossingPoint);
+
+                    // Add notch points between the two crossings
+                    int startNotchIdx = Math.Min(pair.ChronologicalFirst.NotchSegmentIndex, pair.ChronologicalSecond.NotchSegmentIndex);
+                    int endNotchIdx = Math.Max(pair.ChronologicalFirst.NotchSegmentIndex, pair.ChronologicalSecond.NotchSegmentIndex);
+
+                    var notchPointsToAdd = new List<BoundaryPoint>();
+                    for (int i = startNotchIdx + 1; i <= endNotchIdx; i++)
+                    {
+                        if (i < NotchPoints.Count)
+                        {
+                            notchPointsToAdd.Add(NotchPoints[i]);
+                        }
+                    }
+
+                    // Reverse if needed to match boundary direction
+                    if (pair.FirstCrossing.NotchSegmentIndex > pair.SecondCrossing.NotchSegmentIndex)
+                    {
+                        notchPointsToAdd.Reverse();
+                    }
+
+                    newBoundary.AddRange(notchPointsToAdd);
+
+                    // Add second intersection point
+                    newBoundary.Add(pair.SecondCrossing.CrossingPoint);
+
+                    // Skip boundary points between the two crossings
+                    currentBoundaryIdx = pair.SecondBoundaryIdx + 1;
+                    currentPairIdx++;
                 }
-            }
-
-            // Determine if we need to reverse based on which boundary crossing came first
-            // If crossing1 (chronological first) is the second boundary crossing (spatial),
-            // then we need to reverse the notch points
-            if (firstBoundaryCrossing.NotchSegmentIndex > secondBoundaryCrossing.NotchSegmentIndex)
-            {
-                notchPointsToAdd.Reverse();
-                Console.WriteLine($"[VIEWMODEL] Reversing notch points to match boundary direction");
-            }
-
-            newBoundary.AddRange(notchPointsToAdd);
-
-            // Add second boundary intersection point
-            newBoundary.Add(secondBoundaryCrossing.CrossingPoint);
-
-            // Skip boundary points between the crossings, continue after second crossing
-            // This removes the original boundary segment and replaces it with the notch
-            for (int i = secondBoundaryIdx + 1; i < oldBoundary.Count; i++)
-            {
-                newBoundary.Add(oldBoundary[i]);
+                else
+                {
+                    // Regular boundary point, just add it
+                    newBoundary.Add(oldBoundary[currentBoundaryIdx]);
+                    currentBoundaryIdx++;
+                }
             }
 
             // Replace boundary with new one
@@ -1042,8 +1083,8 @@ public partial class MainWindowViewModel : ViewModelBase
             // Save modified boundary
             BoundaryFileService.SaveBoundary(_currentField.Boundary, _currentField.DirectoryPath);
 
-            StatusText = $"Notch applied to boundary";
-            Console.WriteLine($"[VIEWMODEL] Notch applied successfully. New boundary: {newBoundary.Count} points");
+            StatusText = $"{numNotches} notch(es) applied to boundary";
+            Console.WriteLine($"[VIEWMODEL] {numNotches} notch(es) applied successfully. New boundary: {newBoundary.Count} points");
 
             // Clear notch data
             NotchPoints.Clear();
@@ -1186,6 +1227,55 @@ public partial class MainWindowViewModel : ViewModelBase
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Check if a point is inside the boundary using ray casting algorithm
+    /// </summary>
+    private bool IsPointInsideBoundary(BoundaryPoint point)
+    {
+        if (_currentField?.Boundary?.OuterBoundary == null)
+        {
+            return false;
+        }
+
+        var boundaryPoints = _currentField.Boundary.OuterBoundary.Points;
+        if (boundaryPoints.Count < 3)
+        {
+            return false;
+        }
+
+        // Ray casting algorithm: count how many times a ray from the point
+        // to infinity crosses the polygon boundary
+        int crossings = 0;
+        double px = point.Easting;
+        double py = point.Northing;
+
+        for (int i = 0; i < boundaryPoints.Count; i++)
+        {
+            var p1 = boundaryPoints[i];
+            var p2 = boundaryPoints[(i + 1) % boundaryPoints.Count];
+
+            double x1 = p1.Easting, y1 = p1.Northing;
+            double x2 = p2.Easting, y2 = p2.Northing;
+
+            // Check if the ray crosses this edge
+            // Ray goes from point horizontally to the right (positive X direction)
+            if ((y1 > py) != (y2 > py))
+            {
+                // Calculate X coordinate of intersection
+                double xIntersection = x1 + (py - y1) * (x2 - x1) / (y2 - y1);
+
+                // If intersection is to the right of the point, count it
+                if (px < xIntersection)
+                {
+                    crossings++;
+                }
+            }
+        }
+
+        // Odd number of crossings means inside, even means outside
+        return (crossings % 2) == 1;
     }
 
     private void OnConnectionStatusChanged(object? sender, bool isConnected)
