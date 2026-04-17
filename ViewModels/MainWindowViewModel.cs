@@ -108,6 +108,33 @@ public partial class MainWindowViewModel : ViewModelBase
     private string _innerModifyOperation = ""; // "notch" or "bulge"
 
     public ObservableCollection<string> InnerBoundaryChoices { get; } = new ObservableCollection<string>();
+    // NTRIP properties
+    [ObservableProperty]
+    private bool _isNtripConnected = false;
+
+    [ObservableProperty]
+    private bool _ntripEnabled = false;
+
+    [ObservableProperty]
+    private string _ntripHost = string.Empty;
+
+    [ObservableProperty]
+    private int _ntripPort = 2101;
+
+    [ObservableProperty]
+    private string _ntripMountPoint = string.Empty;
+
+    [ObservableProperty]
+    private string _ntripUsername = string.Empty;
+
+    [ObservableProperty]
+    private string _ntripPassword = string.Empty;
+
+    [ObservableProperty]
+    private bool _ntripUseSsl = false;
+
+    [ObservableProperty]
+    private bool _ntripSettingsVisible = false;
 
     // Point Recording Dialog properties
     [ObservableProperty]
@@ -155,6 +182,15 @@ public partial class MainWindowViewModel : ViewModelBase
         SimulatorLongitude = settings.SimulatorLongitude;
         SimulatorSteerAngle = settings.SimulatorSteerAngle;
 
+        // Apply NTRIP settings
+        NtripEnabled = settings.NtripEnabled;
+        NtripHost = settings.NtripHost;
+        NtripPort = settings.NtripPort;
+        NtripMountPoint = settings.NtripMountPoint;
+        NtripUsername = settings.NtripUsername;
+        NtripPassword = settings.NtripPassword;
+        NtripUseSsl = settings.NtripUseSsl;
+
         // Select last used GPS port if available
         if (!string.IsNullOrEmpty(settings.LastGpsPort) && AvailablePorts.Contains(settings.LastGpsPort))
         {
@@ -199,6 +235,15 @@ public partial class MainWindowViewModel : ViewModelBase
         settings.SimulatorSteerAngle = SimulatorSteerAngle;
         settings.LastGpsPort = SelectedPort;
         settings.FieldsDirectory = FieldDirectory;
+
+        // Save NTRIP settings
+        settings.NtripEnabled = NtripEnabled;
+        settings.NtripHost = NtripHost;
+        settings.NtripPort = NtripPort;
+        settings.NtripMountPoint = NtripMountPoint;
+        settings.NtripUsername = NtripUsername;
+        settings.NtripPassword = NtripPassword;
+        settings.NtripUseSsl = NtripUseSsl;
 
         if (_currentField != null)
         {
@@ -396,6 +441,48 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         await _gpsService.DisconnectAsync();
         StatusText = "Disconnected";
+    }
+
+    [RelayCommand]
+    private void ToggleNtripSettings()
+    {
+        NtripSettingsVisible = !NtripSettingsVisible;
+    }
+
+    [RelayCommand]
+    private async Task ConnectNtripAsync()
+    {
+        if (string.IsNullOrWhiteSpace(NtripHost) || string.IsNullOrWhiteSpace(NtripMountPoint))
+        {
+            StatusText = "Please enter NTRIP host and mount point";
+            return;
+        }
+
+        StatusText = $"Connecting to NTRIP {NtripHost}...";
+        bool connected = await _gpsService.ConnectNtripAsync(NtripHost, NtripPort, NtripMountPoint, NtripUsername, NtripPassword, NtripUseSsl);
+
+        if (connected)
+        {
+            IsNtripConnected = true;
+            NtripEnabled = true;
+            StatusText = $"NTRIP connected to {NtripHost}/{NtripMountPoint}";
+            SaveSettings();
+        }
+        else
+        {
+            IsNtripConnected = false;
+            StatusText = $"Failed to connect to NTRIP {NtripHost}";
+        }
+    }
+
+    [RelayCommand]
+    private async Task DisconnectNtripAsync()
+    {
+        await _gpsService.DisconnectNtripAsync();
+        IsNtripConnected = false;
+        NtripEnabled = false;
+        StatusText = "NTRIP disconnected";
+        SaveSettings();
     }
 
     [RelayCommand]
