@@ -4,7 +4,7 @@
         x:Class="AgBoundaryTool.Views.Dialogs.InnerBoundaryModifyDialog"
         x:DataType="vm:MainWindowViewModel"
         Title="Modify Inner Boundary"
-        Width="450" Height="350"
+        Width="450" Height="420"
         CanResize="false">
 
     <Border BorderBrush="Red" BorderThickness="2" CornerRadius="5" Padding="10" Margin="10">
@@ -12,7 +12,7 @@
             <TextBlock Text="Modify Inner Boundary" FontWeight="Bold" FontSize="16"/>
 
             <TextBlock TextWrapping="Wrap" FontSize="12" Foreground="Gray">
-                Select an inner boundary and operation type to modify.
+                Click on an inner boundary in the visualization (highlighted in orange) or select from dropdown below. Then trim to outer boundary, or record a notch/bulge modification.
             </TextBlock>
 
             <!-- Inner Boundary Selection -->
@@ -43,7 +43,15 @@
 
             <!-- Action Buttons -->
             <StackPanel Spacing="8" Margin="0,10,0,0">
-                <Button Content="Start Recording"
+                <Button Content="Trim to Outer Boundary"
+                        Click="TrimButton_Click"
+                        IsEnabled="{Binding CanStartInnerModify}"
+                        Background="DarkOrange" Foreground="White"
+                        HorizontalAlignment="Stretch"
+                        Height="40"
+                        FontSize="14" FontWeight="Bold"/>
+
+                <Button Content="Start Recording (Notch/Bulge)"
                         Click="StartButton_Click"
                         IsEnabled="{Binding CanStartInnerModify}"
                         Background="Green" Foreground="White"

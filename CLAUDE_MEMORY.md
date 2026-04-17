@@ -92,23 +92,44 @@ The notch feature uses TWO dialogs in sequence:
 
 ## Inner Boundary Modification Feature
 
-Inner boundaries (holes/exclusions like ponds) can be modified with TWO operations:
+Inner boundaries (holes/exclusions like ponds) can be modified with THREE operations:
 
 **Operations:**
+- **Trim to Outer Boundary**: Automatically clips inner boundary to only the portion inside outer boundary
 - **Notch**: Cut into inner boundary (makes hole smaller - adds farmable area)
 - **Bulge**: Expand inner boundary outward (makes hole bigger - reduces farmable area)
 
-The feature uses THREE dialogs in sequence:
-1. **InnerBoundaryModifyDialog** - Select which inner boundary and operation (notch/bulge)
+The trim feature uses ONE dialog:
+1. **InnerBoundaryModifyDialog** - Select inner boundary, click "Trim to Outer Boundary"
+
+The notch/bulge feature uses THREE dialogs in sequence:
+1. **InnerBoundaryModifyDialog** - Select which inner boundary (click on visualization OR dropdown) and operation (notch/bulge)
 2. **PointRecordingDialog** - Record the modification path
 3. **InnerBoundaryApplyDialog** - Apply or cancel the modification
+
+**Inner Boundary Selection:**
+- Click INNER button to open modification dialog
+- Visualization enters selection mode - inner boundaries are clickable
+- Click on any inner boundary to select it (highlights in **orange**)
+- Can also use dropdown to select
+- Selected boundary shows in orange vs normal red
+- Selection mode auto-disables when dialog closes
 
 **Validation rules:**
 - Minimum 2 crossings with the target inner boundary (even number required)
 - No start/end position requirement (simpler than outer boundary)
 - Supports multiple modifications in one path
 
-**Algorithm:**
+**Trim Algorithm:**
+- Uses polygon clipping with ray-casting point-in-polygon test
+- For each segment of inner boundary:
+  - If both points inside outer boundary → keep segment
+  - If crossing from inside to outside → add intersection point
+  - If crossing from outside to inside → add intersection point
+  - If both points outside → skip segment
+- Result: Only the portion of inner boundary inside outer boundary remains
+
+**Notch/Bulge Algorithm:**
 - Finds crossings between modification path and target inner boundary
 - Groups crossings into pairs, sorts by boundary position
 - For notch (hole smaller): Uses opposite reversal logic from outer boundary
@@ -120,6 +141,7 @@ The feature uses THREE dialogs in sequence:
 `BoundaryVisualizationControl` - Custom Avalonia control:
 - Green lines/points = Outer boundary
 - Red lines/points = Inner boundaries (holes/exclusions)
+- Orange lines/points = Selected inner boundary (in selection mode)
 - Purple/Magenta lines/circles = Notch/modification points
 - Yellow circles = Selected points
 - Red crosshair + yellow heading line = Vehicle
@@ -127,6 +149,7 @@ The feature uses THREE dialogs in sequence:
 - Mouse wheel zoom (centered on cursor)
 - Click-and-drag panning (disables auto-center)
 - Auto-centers on vehicle unless manually panned
+- Right-click = Snap simulator vehicle to position
 
 **Point Selection:**
 - Click point = Select single point

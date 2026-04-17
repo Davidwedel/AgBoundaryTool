@@ -1,0 +1,79 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:AgBoundaryTool.ViewModels"
+        xmlns:models="using:AgBoundaryTool.Models"
+        xmlns:converters="using:AgBoundaryTool.Converters"
+        x:Class="AgBoundaryTool.Views.Dialogs.FlagManagementDialog"
+        x:DataType="vm:MainWindowViewModel"
+        Title="Flag Management"
+        Width="450" Height="550"
+        CanResize="false">
+
+    <Window.Resources>
+        <converters:FlagColorConverter x:Key="FlagColorConverter"/>
+    </Window.Resources>
+
+    <Border BorderBrush="DarkCyan" BorderThickness="2" CornerRadius="5" Padding="10" Margin="10">
+        <StackPanel Spacing="8">
+            <TextBlock Text="Flag Management" FontWeight="Bold" FontSize="16"/>
+
+            <!-- Flag List -->
+            <Border BorderBrush="Gray" BorderThickness="1" CornerRadius="3" Padding="5" Height="380">
+                <ScrollViewer>
+                    <ItemsControl ItemsSource="{Binding Flags}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="models:Flag">
+                                <Border Margin="0,2" Padding="6" CornerRadius="3" Background="#F5F5F5">
+                                    <Grid ColumnDefinitions="30,*,Auto,30">
+                                        <!-- Color indicator -->
+                                        <Border Grid.Column="0" Width="20" Height="20" CornerRadius="10"
+                                                BorderBrush="Black" BorderThickness="1"
+                                                Background="{Binding Color, Converter={StaticResource FlagColorConverter}}"/>
+
+                                        <!-- Name (editable) -->
+                                        <TextBox Grid.Column="1" Text="{Binding Name}" Margin="8,0"
+                                                 BorderThickness="0" Background="Transparent"
+                                                 VerticalAlignment="Center"/>
+
+                                        <!-- Position -->
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="5">
+                                            <TextBlock Text="{Binding Easting, StringFormat='E: {0:F1}m'}"
+                                                       FontSize="10" VerticalAlignment="Center"/>
+                                            <TextBlock Text="{Binding Northing, StringFormat='N: {0:F1}m'}"
+                                                       FontSize="10" VerticalAlignment="Center"/>
+                                        </StackPanel>
+
+                                        <!-- Delete button -->
+                                        <Button Grid.Column="3" Content="✕" Width="24" Height="24"
+                                                Padding="0" FontSize="12" Background="Transparent"
+                                                Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).DeleteFlagCommand}"
+                                                CommandParameter="{Binding}"/>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Border>
+
+            <!-- Action Buttons -->
+            <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto">
+                <Button Grid.Row="0" Grid.Column="0" Content="Add Flag at Vehicle"
+                        Command="{Binding AddFlagAtVehicleCommand}"
+                        Margin="0,0,2.5,2.5"/>
+                <Button Grid.Row="0" Grid.Column="1" Content="Delete All Flags"
+                        Command="{Binding DeleteAllFlagsCommand}"
+                        Margin="2.5,0,0,2.5"/>
+            </Grid>
+
+            <!-- Flag Count -->
+            <TextBlock HorizontalAlignment="Center" FontSize="11" Foreground="Gray">
+                <Run Text="Total Flags: "/>
+                <Run Text="{Binding Flags.Count}"/>
+            </TextBlock>
+
+            <Button Content="Close" HorizontalAlignment="Right"
+                    Click="CloseButton_Click" Margin="0,5,0,0"/>
+        </StackPanel>
+    </Border>
+</Window>
