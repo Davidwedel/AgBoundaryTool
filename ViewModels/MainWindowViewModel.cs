@@ -349,33 +349,40 @@ public partial class MainWindowViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void LoadField()
+    private async Task LoadField()
     {
-        // Simple field loader - lists all fields in field directory and prompts user to select
         try
         {
-            if (!Directory.Exists(FieldDirectory))
+            // Use Avalonia's folder picker, starting in the fields directory
+            var topLevel = Avalonia.Application.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
+                ? desktop.MainWindow
+                : null;
+
+            if (topLevel == null)
             {
-                StatusText = "Fields directory does not exist";
+                StatusText = "Cannot open folder picker";
                 return;
             }
 
-            var fieldDirectories = Directory.GetDirectories(FieldDirectory);
-            if (fieldDirectories.Length == 0)
+            // Get suggested start location (fields directory)
+            var startFolder = await topLevel.StorageProvider.TryGetFolderFromPathAsync(new Uri(FieldDirectory));
+
+            var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new Avalonia.Platform.Storage.FolderPickerOpenOptions
             {
-                StatusText = "No fields found";
-                return;
+                Title = "Select Field to Load",
+                AllowMultiple = false,
+                SuggestedStartLocation = startFolder
+            });
+
+            if (folders.Count > 0)
+            {
+                var selectedPath = folders[0].Path.LocalPath;
+                if (!string.IsNullOrEmpty(selectedPath))
+                {
+                    Console.WriteLine($"[VIEWMODEL] Loading field from: {selectedPath}");
+                    LoadFieldByPath(selectedPath);
+                }
             }
-
-            // Get field names
-            var fieldNames = fieldDirectories.Select(d => Path.GetFileName(d)).ToArray();
-
-            // For now, just load the first field found (TODO: add proper dialog)
-            // In a real implementation, we'd show a selection dialog here
-            var fieldName = fieldNames[0];
-            var fieldPath = Path.Combine(FieldDirectory, fieldName);
-
-            LoadFieldByPath(fieldPath);
         }
         catch (Exception ex)
         {
