@@ -388,6 +388,136 @@ public partial class MainWindowViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private void TrimInnerBoundary()
+    {
+        if (_currentField?.Boundary?.OuterBoundary == null || _currentField.Boundary.InnerBoundaries == null)
+        {
+            StatusText = "No boundary data available";
+            return;
+        }
+
+        if (SelectedInnerBoundaryIndex < 0 || SelectedInnerBoundaryIndex >= _currentField.Boundary.InnerBoundaries.Count)
+        {
+            StatusText = "Invalid inner boundary selection";
+            return;
+        }
+
+        var innerBoundary = _currentField.Boundary.InnerBoundaries[SelectedInnerBoundaryIndex];
+        var outerBoundary = _currentField.Boundary.OuterBoundary.Points;
+
+        Console.WriteLine($"[VIEWMODEL] Trimming inner boundary {SelectedInnerBoundaryIndex} with {innerBoundary.Points.Count} points");
+
+        // Find all points that are inside the outer boundary
+        var trimmedPoints = TrimPolygonToOuterBoundary(innerBoundary.Points, outerBoundary);
+
+        if (trimmedPoints.Count < 3)
+        {
+            StatusText = "Inner boundary is completely outside outer boundary - cannot trim";
+            Console.WriteLine("[VIEWMODEL] Trim failed: result has less than 3 points");
+            return;
+        }
+
+        // Update the inner boundary with trimmed points
+        innerBoundary.Points.Clear();
+        foreach (var point in trimmedPoints)
+        {
+            innerBoundary.Points.Add(point);
+        }
+
+        // Update visualization
+        _visualizationControl?.SetInnerBoundaries(
+            _currentField.Boundary.InnerBoundaries.Select(ib => ib.Points));
+
+        // Recalculate area
+        BoundaryArea = _currentField.Boundary.AreaHectares;
+
+        // Save modified boundary
+        BoundaryFileService.SaveBoundary(_currentField.Boundary, _currentField.DirectoryPath);
+
+        StatusText = $"Inner boundary trimmed: {innerBoundary.Points.Count} points, {innerBoundary.AreaHectares:F2} ha";
+        Console.WriteLine($"[VIEWMODEL] Inner boundary trimmed to {innerBoundary.Points.Count} points");
+    }
+
+    private List<BoundaryPoint> TrimPolygonToOuterBoundary(IList<BoundaryPoint> innerPoints, IList<BoundaryPoint> outerPoints)
+    {
+        var result = new List<BoundaryPoint>();
+
+        for (int i = 0; i < innerPoints.Count; i++)
+        {
+            var currentPoint = innerPoints[i];
+            var nextPoint = innerPoints[(i + 1) % innerPoints.Count];
+
+            bool currentInside = IsPointInsideBoundary(currentPoint, outerPoints);
+            bool nextInside = IsPointInsideBoundary(nextPoint, outerPoints);
+
+            if (currentInside)
+            {
+                // Current point is inside - add it
+                result.Add(currentPoint);
+            }
+
+            // Check if the segment crosses the outer boundary
+            if (currentInside != nextInside)
+            {
+                // Segment crosses - find intersection point
+                BoundaryPoint? intersection = FindSegmentBoundaryIntersection(currentPoint, nextPoint, outerPoints);
+                if (intersection != null)
+                {
+                    result.Add(intersection);
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private BoundaryPoint? FindSegmentBoundaryIntersection(BoundaryPoint p1, BoundaryPoint p2, IList<BoundaryPoint> boundary)
+    {
+        // Find the first intersection of segment p1-p2 with the boundary
+        for (int i = 0; i < boundary.Count; i++)
+        {
+            var boundaryP1 = boundary[i];
+            var boundaryP2 = boundary[(i + 1) % boundary.Count];
+
+            if (LineSegmentsIntersect(p1, p2, boundaryP1, boundaryP2, out var intersection))
+            {
+                return intersection;
+            }
+        }
+
+        return null;
+    }
+
+    private bool IsPointInsideBoundary(BoundaryPoint point, IList<BoundaryPoint> boundary)
+    {
+        // Ray casting algorithm - count how many times a ray from the point crosses the boundary
+        int crossings = 0;
+        double px = point.Easting;
+        double py = point.Northing;
+
+        for (int i = 0; i < boundary.Count; i++)
+        {
+            var p1 = boundary[i];
+            var p2 = boundary[(i + 1) % boundary.Count];
+
+            // Check if ray from point going right crosses this edge
+            if (((p1.Northing <= py) && (p2.Northing > py)) || ((p1.Northing > py) && (p2.Northing <= py)))
+            {
+                // Calculate x coordinate of intersection
+                double intersectX = p1.Easting + (py - p1.Northing) / (p2.Northing - p1.Northing) * (p2.Easting - p1.Easting);
+
+                if (px < intersectX)
+                {
+                    crossings++;
+                }
+            }
+        }
+
+        // Odd number of crossings = inside
+        return (crossings % 2) == 1;
+    }
+
+    [RelayCommand]
     private void StartInnerBoundaryRecording()
     {
         var mainWindow = GetMainWindow();

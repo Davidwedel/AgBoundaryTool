@@ -92,13 +92,17 @@ The notch feature uses TWO dialogs in sequence:
 
 ## Inner Boundary Modification Feature
 
-Inner boundaries (holes/exclusions like ponds) can be modified with TWO operations:
+Inner boundaries (holes/exclusions like ponds) can be modified with THREE operations:
 
 **Operations:**
+- **Trim to Outer Boundary**: Automatically clips inner boundary to only the portion inside outer boundary
 - **Notch**: Cut into inner boundary (makes hole smaller - adds farmable area)
 - **Bulge**: Expand inner boundary outward (makes hole bigger - reduces farmable area)
 
-The feature uses THREE dialogs in sequence:
+The trim feature uses ONE dialog:
+1. **InnerBoundaryModifyDialog** - Select inner boundary, click "Trim to Outer Boundary"
+
+The notch/bulge feature uses THREE dialogs in sequence:
 1. **InnerBoundaryModifyDialog** - Select which inner boundary (click on visualization OR dropdown) and operation (notch/bulge)
 2. **PointRecordingDialog** - Record the modification path
 3. **InnerBoundaryApplyDialog** - Apply or cancel the modification
@@ -116,7 +120,16 @@ The feature uses THREE dialogs in sequence:
 - No start/end position requirement (simpler than outer boundary)
 - Supports multiple modifications in one path
 
-**Algorithm:**
+**Trim Algorithm:**
+- Uses polygon clipping with ray-casting point-in-polygon test
+- For each segment of inner boundary:
+  - If both points inside outer boundary → keep segment
+  - If crossing from inside to outside → add intersection point
+  - If crossing from outside to inside → add intersection point
+  - If both points outside → skip segment
+- Result: Only the portion of inner boundary inside outer boundary remains
+
+**Notch/Bulge Algorithm:**
 - Finds crossings between modification path and target inner boundary
 - Groups crossings into pairs, sorts by boundary position
 - For notch (hole smaller): Uses opposite reversal logic from outer boundary
