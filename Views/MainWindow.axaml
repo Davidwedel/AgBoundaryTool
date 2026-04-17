@@ -55,6 +55,13 @@
                                VerticalAlignment="Center" HorizontalAlignment="Center"/>
                 </Button>
 
+                <Button Command="{Binding OpenInnerBoundaryModifyDialogCommand}"
+                        Height="60" Width="60"
+                        ToolTip.Tip="Modify Inner Boundary">
+                    <TextBlock Text="INNER" FontSize="12" FontWeight="Bold"
+                               VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                </Button>
+
             </StackPanel>
         </Border>
 

@@ -18,6 +18,7 @@ namespace AgBoundaryTool.Views.Controls;
 public class BoundaryVisualizationControl : Control
 {
     private List<BoundaryPoint> _boundaryPoints = new List<BoundaryPoint>();
+    private List<List<BoundaryPoint>> _innerBoundaries = new List<List<BoundaryPoint>>();
     private List<BoundaryPoint> _notchPoints = new List<BoundaryPoint>();
     private Position? _vehiclePosition;
     private double _zoom = 1.0;
@@ -30,6 +31,10 @@ public class BoundaryVisualizationControl : Control
     private Point _panStartPoint;
     private bool _manualPanActive = false; // User has manually panned, disable auto-center
 
+    // Point selection state
+    private HashSet<int> _selectedPointIndices = new HashSet<int>();
+    private int? _firstSelectedIndex = null; // For range selection
+
     // Visual settings
     private const double GridSize = 50.0; // meters
     private const double CrosshairSize = 20.0; // pixels
@@ -38,33 +43,46 @@ public class BoundaryVisualizationControl : Control
 
     // Styling
     private readonly SolidColorBrush _gridBrush = new SolidColorBrush(Color.FromArgb(40, 128, 128, 128));
-    private readonly SolidColorBrush _boundaryBrush = new SolidColorBrush(Color.FromRgb(0, 200, 0));
+    private readonly SolidColorBrush _boundaryBrush = new SolidColorBrush(Color.FromRgb(0, 200, 0)); // Green
+    private readonly SolidColorBrush _innerBoundaryBrush = new SolidColorBrush(Color.FromRgb(200, 0, 0)); // Red
     private readonly SolidColorBrush _vehicleBrush = new SolidColorBrush(Color.FromRgb(255, 0, 0));
     private readonly SolidColorBrush _notchBrush = new SolidColorBrush(Color.FromRgb(200, 0, 200)); // Purple/Magenta
+    private readonly SolidColorBrush _selectedBrush = new SolidColorBrush(Color.FromRgb(255, 255, 0)); // Yellow
     private readonly SolidColorBrush _backgroundBrush = new SolidColorBrush(Color.FromRgb(40, 40, 40));
     private readonly Pen _gridPen;
     private readonly Pen _boundaryPen;
+    private readonly Pen _innerBoundaryPen;
     private readonly Pen _vehiclePen;
     private readonly Pen _notchPen;
+    private readonly Pen _selectedPen;
 
     public BoundaryVisualizationControl()
     {
         _gridPen = new Pen(_gridBrush, 1.0);
         _boundaryPen = new Pen(_boundaryBrush, LineThickness);
+        _innerBoundaryPen = new Pen(_innerBoundaryBrush, LineThickness);
         _vehiclePen = new Pen(_vehicleBrush, 2.0);
         _notchPen = new Pen(_notchBrush, LineThickness + 1);
+        _selectedPen = new Pen(_selectedBrush, 3.0);
 
         // Update on data changes
         ClipToBounds = true;
+        Focusable = true; // Enable keyboard input
 
         // Enable mouse wheel zoom
         this.PointerWheelChanged += OnPointerWheelChanged;
 
-        // Enable panning
+        // Enable panning and point selection
         this.PointerPressed += OnPointerPressed;
         this.PointerMoved += OnPointerMoved;
         this.PointerReleased += OnPointerReleased;
+
+        // Enable keyboard for Delete key
+        this.KeyDown += OnKeyDown;
     }
+
+    // Event for notifying when points should be deleted
+    public event EventHandler<List<int>>? PointsDeleteRequested;
 
     private void OnPointerWheelChanged(object? sender, Avalonia.Input.PointerWheelEventArgs e)
     {
@@ -105,13 +123,65 @@ public class BoundaryVisualizationControl : Control
 
     private void OnPointerPressed(object? sender, Avalonia.Input.PointerPressedEventArgs e)
     {
-        // Start panning on left mouse button
         var properties = e.GetCurrentPoint(this).Properties;
         if (properties.IsLeftButtonPressed)
         {
-            _isPanning = true;
-            _panStartPoint = e.GetPosition(this);
-            e.Handled = true;
+            var mousePos = e.GetPosition(this);
+            var modifiers = e.KeyModifiers;
+
+            // Check if clicking on a boundary point
+            int? clickedPointIndex = FindPointAtPosition(mousePos);
+
+            if (clickedPointIndex.HasValue)
+            {
+                // Clicked on a point - handle selection
+                Focus(); // Ensure we have focus for keyboard events
+
+                if (modifiers.HasFlag(Avalonia.Input.KeyModifiers.Control))
+                {
+                    // Ctrl+Click: Toggle selection
+                    if (_selectedPointIndices.Contains(clickedPointIndex.Value))
+                    {
+                        _selectedPointIndices.Remove(clickedPointIndex.Value);
+                        _firstSelectedIndex = null;
+                    }
+                    else
+                    {
+                        _selectedPointIndices.Add(clickedPointIndex.Value);
+                        _firstSelectedIndex = clickedPointIndex.Value;
+                    }
+                }
+                else
+                {
+                    // Regular click: Handle range selection or single selection
+                    if (_firstSelectedIndex.HasValue && _selectedPointIndices.Contains(_firstSelectedIndex.Value))
+                    {
+                        // Second click - select range
+                        SelectRange(_firstSelectedIndex.Value, clickedPointIndex.Value);
+                        _firstSelectedIndex = null;
+                    }
+                    else
+                    {
+                        // First click - single selection
+                        _selectedPointIndices.Clear();
+                        _selectedPointIndices.Add(clickedPointIndex.Value);
+                        _firstSelectedIndex = clickedPointIndex.Value;
+                    }
+                }
+
+                InvalidateVisual();
+                e.Handled = true;
+            }
+            else
+            {
+                // Didn't click on a point - start panning and clear selection
+                _selectedPointIndices.Clear();
+                _firstSelectedIndex = null;
+                _isPanning = true;
+                _panStartPoint = mousePos;
+                InvalidateVisual();
+                e.Handled = true;
+            }
         }
     }
 
@@ -172,6 +242,15 @@ public class BoundaryVisualizationControl : Control
     }
 
     /// <summary>
+    /// Set inner boundaries (holes/exclusions) to visualize
+    /// </summary>
+    public void SetInnerBoundaries(IEnumerable<IEnumerable<BoundaryPoint>> innerBoundaries)
+    {
+        _innerBoundaries = innerBoundaries.Select(b => b.ToList()).ToList();
+        Dispatcher.UIThread.Post(InvalidateVisual, DispatcherPriority.Render);
+    }
+
+    /// <summary>
     /// Set vehicle position
     /// </summary>
     public void SetVehiclePosition(Position position, double easting, double northing)
@@ -210,9 +289,108 @@ public class BoundaryVisualizationControl : Control
     public void Clear()
     {
         _boundaryPoints.Clear();
+        _innerBoundaries.Clear();
+        _notchPoints.Clear();
         _vehiclePosition = null;
         _manualPanActive = false; // Reset manual pan flag
+        _selectedPointIndices.Clear();
+        _firstSelectedIndex = null;
         Dispatcher.UIThread.Post(InvalidateVisual);
+    }
+
+    /// <summary>
+    /// Find if a boundary point is at the given screen position
+    /// Uses flat indexing: outer boundary points first, then inner boundary points
+    /// </summary>
+    private int? FindPointAtPosition(Point screenPos)
+    {
+        const double hitRadius = 10.0; // pixels - click tolerance
+
+        // Check outer boundary points
+        for (int i = 0; i < _boundaryPoints.Count; i++)
+        {
+            var point = _boundaryPoints[i];
+            var pointScreen = WorldToScreen(point.Easting, point.Northing);
+
+            double distance = Math.Sqrt(
+                Math.Pow(screenPos.X - pointScreen.X, 2) +
+                Math.Pow(screenPos.Y - pointScreen.Y, 2)
+            );
+
+            if (distance <= hitRadius)
+            {
+                return i;
+            }
+        }
+
+        // Check inner boundary points (indexed after outer boundary)
+        int currentIndex = _boundaryPoints.Count;
+        foreach (var innerBoundary in _innerBoundaries)
+        {
+            for (int i = 0; i < innerBoundary.Count; i++)
+            {
+                var point = innerBoundary[i];
+                var pointScreen = WorldToScreen(point.Easting, point.Northing);
+
+                double distance = Math.Sqrt(
+                    Math.Pow(screenPos.X - pointScreen.X, 2) +
+                    Math.Pow(screenPos.Y - pointScreen.Y, 2)
+                );
+
+                if (distance <= hitRadius)
+                {
+                    return currentIndex + i;
+                }
+            }
+            currentIndex += innerBoundary.Count;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Select all points between two indices (inclusive)
+    /// </summary>
+    private void SelectRange(int index1, int index2)
+    {
+        int start = Math.Min(index1, index2);
+        int end = Math.Max(index1, index2);
+
+        _selectedPointIndices.Clear();
+        for (int i = start; i <= end; i++)
+        {
+            _selectedPointIndices.Add(i);
+        }
+
+        Console.WriteLine($"[VISUALIZATION] Selected range: {start} to {end} ({_selectedPointIndices.Count} points)");
+    }
+
+    /// <summary>
+    /// Handle keyboard input (Delete key)
+    /// </summary>
+    private void OnKeyDown(object? sender, Avalonia.Input.KeyEventArgs e)
+    {
+        if (e.Key == Avalonia.Input.Key.Delete && _selectedPointIndices.Count > 0)
+        {
+            // Notify listeners that points should be deleted
+            var indicesToDelete = _selectedPointIndices.OrderByDescending(i => i).ToList();
+            PointsDeleteRequested?.Invoke(this, indicesToDelete);
+
+            _selectedPointIndices.Clear();
+            _firstSelectedIndex = null;
+            InvalidateVisual();
+            e.Handled = true;
+
+            Console.WriteLine($"[VISUALIZATION] Delete key pressed, requesting deletion of {indicesToDelete.Count} points");
+        }
+        else if (e.Key == Avalonia.Input.Key.Escape)
+        {
+            // Escape clears selection
+            _selectedPointIndices.Clear();
+            _firstSelectedIndex = null;
+            InvalidateVisual();
+            e.Handled = true;
+        }
     }
 
     /// <summary>
@@ -288,6 +466,9 @@ public class BoundaryVisualizationControl : Control
         // Draw boundary
         DrawBoundary(context);
 
+        // Draw inner boundaries (holes/exclusions)
+        DrawInnerBoundaries(context);
+
         // Draw notch points
         DrawNotchPoints(context);
 
@@ -338,14 +519,87 @@ public class BoundaryVisualizationControl : Control
         }
 
         // Draw boundary points
-        foreach (var point in _boundaryPoints)
+        for (int i = 0; i < _boundaryPoints.Count; i++)
         {
+            var point = _boundaryPoints[i];
             var screenPos = WorldToScreen(point.Easting, point.Northing);
-            context.FillRectangle(
-                _boundaryBrush,
-                new Rect(screenPos.X - PointRadius / 2, screenPos.Y - PointRadius / 2,
-                         PointRadius, PointRadius)
-            );
+            bool isSelected = _selectedPointIndices.Contains(i);
+
+            if (isSelected)
+            {
+                // Draw selected points as larger yellow circles
+                double selectedRadius = PointRadius * 2;
+                var circle = new EllipseGeometry(new Rect(
+                    screenPos.X - selectedRadius, screenPos.Y - selectedRadius,
+                    selectedRadius * 2, selectedRadius * 2));
+                context.DrawGeometry(_selectedBrush, _selectedPen, circle);
+            }
+            else
+            {
+                // Draw normal points as green rectangles
+                context.FillRectangle(
+                    _boundaryBrush,
+                    new Rect(screenPos.X - PointRadius / 2, screenPos.Y - PointRadius / 2,
+                             PointRadius, PointRadius)
+                );
+            }
+        }
+    }
+
+    private void DrawInnerBoundaries(DrawingContext context)
+    {
+        if (_innerBoundaries.Count == 0) return;
+
+        int currentIndex = _boundaryPoints.Count; // Start indexing after outer boundary
+
+        foreach (var innerBoundary in _innerBoundaries)
+        {
+            if (innerBoundary.Count < 2)
+            {
+                currentIndex += innerBoundary.Count;
+                continue;
+            }
+
+            // Draw inner boundary lines (red)
+            for (int i = 0; i < innerBoundary.Count; i++)
+            {
+                var p1 = innerBoundary[i];
+                var p2 = innerBoundary[(i + 1) % innerBoundary.Count];
+
+                var screen1 = WorldToScreen(p1.Easting, p1.Northing);
+                var screen2 = WorldToScreen(p2.Easting, p2.Northing);
+
+                context.DrawLine(_innerBoundaryPen, screen1, screen2);
+            }
+
+            // Draw inner boundary points (red rectangles, or yellow circles if selected)
+            for (int i = 0; i < innerBoundary.Count; i++)
+            {
+                var point = innerBoundary[i];
+                var screenPos = WorldToScreen(point.Easting, point.Northing);
+                bool isSelected = _selectedPointIndices.Contains(currentIndex + i);
+
+                if (isSelected)
+                {
+                    // Draw selected points as larger yellow circles
+                    double selectedRadius = PointRadius * 2;
+                    var circle = new EllipseGeometry(new Rect(
+                        screenPos.X - selectedRadius, screenPos.Y - selectedRadius,
+                        selectedRadius * 2, selectedRadius * 2));
+                    context.DrawGeometry(_selectedBrush, _selectedPen, circle);
+                }
+                else
+                {
+                    // Draw normal points as red rectangles
+                    context.FillRectangle(
+                        _innerBoundaryBrush,
+                        new Rect(screenPos.X - PointRadius / 2, screenPos.Y - PointRadius / 2,
+                                 PointRadius, PointRadius)
+                    );
+                }
+            }
+
+            currentIndex += innerBoundary.Count;
         }
     }
 
@@ -421,6 +675,10 @@ public class BoundaryVisualizationControl : Control
         var typeface = new Typeface("Arial");
 
         string info = $"Points: {_boundaryPoints.Count}";
+        if (_innerBoundaries.Count > 0)
+        {
+            info += $" | Inner: {_innerBoundaries.Count}";
+        }
         if (_vehiclePosition != null)
         {
             info += $" | Position: {_vehiclePosition.Easting:F1}m E, {_vehiclePosition.Northing:F1}m N";
