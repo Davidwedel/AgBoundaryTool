@@ -3,58 +3,58 @@
         xmlns:vm="using:AgBoundaryTool.ViewModels"
         x:Class="AgBoundaryTool.Views.Dialogs.BoundaryNotchDialog"
         x:DataType="vm:MainWindowViewModel"
-        Title="Boundary Notch"
-        Width="350" Height="400"
+        Title="Apply Boundary Notch"
+        Width="450" Height="400"
         CanResize="false">
 
     <Border BorderBrush="Purple" BorderThickness="2" CornerRadius="5" Padding="10" Margin="10">
-        <StackPanel Spacing="8">
-            <TextBlock Text="Boundary Notch" FontWeight="Bold" FontSize="16"/>
+        <StackPanel Spacing="10">
+            <TextBlock Text="Apply Boundary Notch" FontWeight="Bold" FontSize="16"/>
 
             <TextBlock TextWrapping="Wrap" FontSize="12" Foreground="Gray">
-                Record points that cross the boundary twice to create a notch (cutout) in the boundary.
+                Review your recorded notch and apply it to the boundary, or cancel to discard.
             </TextBlock>
 
-            <Border Background="#F0F0F0" Padding="8" CornerRadius="3">
+            <!-- Notch Status -->
+            <Border Background="#F0F0F0" Padding="10" CornerRadius="3">
+                <StackPanel Spacing="5">
+                    <TextBlock Text="{Binding NotchPointCount, StringFormat='Points Recorded: {0}'}"
+                               FontSize="13"/>
+                    <TextBlock Text="{Binding StatusText}"
+                               TextWrapping="Wrap"
+                               FontSize="12"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Warning if invalid -->
+            <Border Background="#FFF3CD" BorderBrush="#FFA500" BorderThickness="1"
+                    Padding="8" CornerRadius="3"
+                    IsVisible="{Binding !CanApplyNotch}">
                 <StackPanel Spacing="3">
-                    <TextBlock Text="{Binding NotchPointCount, StringFormat='Notch Points: {0}'}"/>
-                    <TextBlock Text="{Binding IsRecordingNotch}"
-                               Foreground="Red" FontWeight="Bold"
-                               IsVisible="{Binding IsRecordingNotch}">
-                        RECORDING NOTCH...
+                    <TextBlock Text="⚠ Cannot Apply Notch" FontWeight="Bold" FontSize="12" Foreground="#856404"/>
+                    <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#856404">
+                        The notch path must cross the boundary at least twice, with start and end points outside the boundary.
                     </TextBlock>
                 </StackPanel>
             </Border>
 
-            <Button Content="Start Recording Notch"
-                    Command="{Binding StartRecordingNotchCommand}"
-                    IsEnabled="{Binding !IsRecordingNotch}"
-                    Background="Green" Foreground="White"/>
+            <!-- Action Buttons -->
+            <StackPanel Spacing="8" Margin="0,10,0,0">
+                <Button Content="Apply Notch to Boundary"
+                        Click="ApplyButton_Click"
+                        IsEnabled="{Binding CanApplyNotch}"
+                        Background="Green" Foreground="White"
+                        HorizontalAlignment="Stretch"
+                        Height="40"
+                        FontSize="14" FontWeight="Bold"/>
 
-            <Button Content="Stop Recording Notch"
-                    Command="{Binding StopRecordingNotchCommand}"
-                    IsEnabled="{Binding IsRecordingNotch}"
-                    Background="Red" Foreground="White"/>
-
-            <Button Content="Apply Notch to Boundary"
-                    Command="{Binding ApplyNotchCommand}"
-                    IsEnabled="{Binding CanApplyNotch}"/>
-
-            <Button Content="Cancel Notch"
-                    Command="{Binding CancelNotchCommand}"/>
-
-            <TextBlock Text="Instructions:" FontWeight="SemiBold" Margin="0,10,0,0"/>
-            <TextBlock TextWrapping="Wrap" FontSize="12">
-                1. Position vehicle outside boundary
-                2. Click 'Start Recording Notch'
-                3. Drive across boundary into field
-                4. Drive back out across boundary
-                5. Click 'Stop Recording Notch'
-                6. Click 'Apply Notch' to modify boundary
-            </TextBlock>
-
-            <Button Content="Close" HorizontalAlignment="Right"
-                    Click="CloseButton_Click" Margin="0,10,0,0"/>
+                <Button Content="Cancel - Discard Notch"
+                        Click="CancelButton_Click"
+                        Background="DarkRed" Foreground="White"
+                        HorizontalAlignment="Stretch"
+                        Height="40"
+                        FontSize="14"/>
+            </StackPanel>
         </StackPanel>
     </Border>
 </Window>

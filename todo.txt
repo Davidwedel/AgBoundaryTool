@@ -2,3 +2,7 @@ split field
 marker lines
 when panned, snap to center
 delete points
+have boundary recorder use the new point creator
+trim inner boundaries to outer boundaries
+flags
+track record??

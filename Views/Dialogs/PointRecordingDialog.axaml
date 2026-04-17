@@ -1,0 +1,97 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:AgBoundaryTool.ViewModels"
+        x:Class="AgBoundaryTool.Views.Dialogs.PointRecordingDialog"
+        x:DataType="vm:MainWindowViewModel"
+        Title="Point Recording"
+        Width="400" Height="500"
+        CanResize="false">
+
+    <Border BorderBrush="DarkGreen" BorderThickness="2" CornerRadius="5" Padding="10" Margin="10">
+        <StackPanel Spacing="10">
+            <TextBlock Text="{Binding PointRecordingTitle}" FontWeight="Bold" FontSize="16"/>
+
+            <TextBlock TextWrapping="Wrap" FontSize="12" Foreground="Gray"
+                       Text="{Binding PointRecordingDescription}"/>
+
+            <Border Background="#F0F0F0" Padding="8" CornerRadius="3">
+                <StackPanel Spacing="3">
+                    <TextBlock Text="{Binding PointCount, StringFormat='Points Recorded: {0}'}"/>
+                    <TextBlock Text="RECORDING CONTINUOUSLY..."
+                               Foreground="Red" FontWeight="Bold"
+                               IsVisible="{Binding IsRecordingContinuously}"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Recording Controls -->
+            <StackPanel Spacing="8">
+
+                <!-- Add Point Button -->
+                <Button Height="60" HorizontalAlignment="Stretch"
+                        Command="{Binding AddSinglePointCommand}"
+                        ToolTip.Tip="Add current GPS position as a point">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <Image Source="/btnImages/PointAdd.png" Width="40" Height="40"/>
+                        <TextBlock Text="Add Point" VerticalAlignment="Center" FontSize="14"/>
+                    </StackPanel>
+                </Button>
+
+                <!-- Delete Last Point Button -->
+                <Button Height="60" HorizontalAlignment="Stretch"
+                        Command="{Binding DeleteLastPointCommand}"
+                        IsEnabled="{Binding !!PointCount}"
+                        ToolTip.Tip="Remove the last recorded point">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <Image Source="/btnImages/PointDelete.png" Width="40" Height="40"/>
+                        <TextBlock Text="Delete Last Point" VerticalAlignment="Center" FontSize="14"/>
+                    </StackPanel>
+                </Button>
+
+                <!-- Record Continuously Toggle Button -->
+                <Button Height="60" HorizontalAlignment="Stretch"
+                        Command="{Binding ToggleContinuousRecordingCommand}"
+                        ToolTip.Tip="Toggle continuous recording on/off">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <!-- Play icon when NOT recording, Pause icon when recording -->
+                        <Image Source="/btnImages/boundaryPlay.png" Width="40" Height="40"
+                               IsVisible="{Binding !IsRecordingContinuously}"/>
+                        <Image Source="/btnImages/boundaryPause.png" Width="40" Height="40"
+                               IsVisible="{Binding IsRecordingContinuously}"/>
+                        <TextBlock Text="{Binding ContinuousRecordingButtonText}"
+                                   VerticalAlignment="Center" FontSize="14"/>
+                    </StackPanel>
+                </Button>
+
+            </StackPanel>
+
+            <!-- Instructions -->
+            <Border Background="#FFF9E6" BorderBrush="#FFD700" BorderThickness="1"
+                    CornerRadius="3" Padding="8" Margin="0,10,0,0">
+                <StackPanel Spacing="5">
+                    <TextBlock Text="Quick Guide:" FontWeight="SemiBold" FontSize="12"/>
+                    <TextBlock TextWrapping="Wrap" FontSize="11">
+                        • Add Point: Click to record current GPS position
+                    </TextBlock>
+                    <TextBlock TextWrapping="Wrap" FontSize="11">
+                        • Delete: Remove last point if you made a mistake
+                    </TextBlock>
+                    <TextBlock TextWrapping="Wrap" FontSize="11">
+                        • Continuous: Toggle to automatically record points while driving (1m spacing)
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- Done Button -->
+            <Button HorizontalAlignment="Right" Margin="0,10,0,0"
+                    Click="DoneButton_Click"
+                    IsEnabled="{Binding !IsRecordingContinuously}"
+                    ToolTip.Tip="Finish recording and apply (stop continuous recording first)">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <Image Source="/btnImages/OK64.png" Width="32" Height="32"/>
+                    <TextBlock Text="Done" VerticalAlignment="Center" FontSize="14" FontWeight="Bold"/>
+                </StackPanel>
+            </Button>
+
+        </StackPanel>
+    </Border>
+</Window>

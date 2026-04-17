@@ -91,6 +91,21 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     private bool _canApplyNotch = false;
 
+    // Point Recording Dialog properties
+    [ObservableProperty]
+    private string _pointRecordingTitle = "Point Recording";
+
+    [ObservableProperty]
+    private string _pointRecordingDescription = "Record GPS points";
+
+    [ObservableProperty]
+    private bool _isRecordingContinuously = false;
+
+    [ObservableProperty]
+    private string _continuousRecordingButtonText = "Start Continuous";
+
+    private string _pointRecordingMode = ""; // "boundary" or "notch"
+
     public ObservableCollection<string> AvailablePorts { get; } = new ObservableCollection<string>();
     public ObservableCollection<BoundaryPoint> BoundaryPoints { get; } = new ObservableCollection<BoundaryPoint>();
     public ObservableCollection<BoundaryPoint> NotchPoints { get; } = new ObservableCollection<BoundaryPoint>();
@@ -220,7 +235,14 @@ public partial class MainWindowViewModel : ViewModelBase
         var mainWindow = GetMainWindow();
         if (mainWindow == null) return;
 
-        var dialog = new Views.Dialogs.BoundaryRecordingDialog
+        // Set up for boundary recording mode
+        _pointRecordingMode = "boundary";
+        PointRecordingTitle = "Boundary Recording";
+        PointRecordingDescription = "Drive around the field perimeter to record the boundary. Points are recorded every 1 meter.";
+        IsRecordingContinuously = false;
+        UpdateContinuousRecordingButtonText();
+
+        var dialog = new Views.Dialogs.PointRecordingDialog
         {
             DataContext = this
         };
@@ -233,7 +255,14 @@ public partial class MainWindowViewModel : ViewModelBase
         var mainWindow = GetMainWindow();
         if (mainWindow == null) return;
 
-        var dialog = new Views.Dialogs.BoundaryNotchDialog
+        // Set up for notch recording mode
+        _pointRecordingMode = "notch";
+        PointRecordingTitle = "Boundary Notch";
+        PointRecordingDescription = "Drive a path that crosses the boundary at least twice to create a notch (cutout). Start and end outside the boundary.";
+        IsRecordingContinuously = false;
+        UpdateContinuousRecordingButtonText();
+
+        var dialog = new Views.Dialogs.PointRecordingDialog
         {
             DataContext = this
         };
@@ -428,6 +457,152 @@ public partial class MainWindowViewModel : ViewModelBase
             BoundaryPoints.RemoveAt(BoundaryPoints.Count - 1);
             PointCount = BoundaryPoints.Count;
         }
+    }
+
+    // Point Recording Dialog Commands
+
+    [RelayCommand]
+    private void AddSinglePoint()
+    {
+        if (_gpsService.CurrentPosition == null)
+        {
+            StatusText = "No GPS fix - cannot add point";
+            return;
+        }
+
+        if (_pointRecordingMode == "boundary")
+        {
+            // Auto-start recording if not already started
+            if (!IsRecording)
+            {
+                StartRecording();
+            }
+
+            // Force add this specific point by temporarily lowering the minimum distance
+            var savedMinDistance = _recordingService.MinimumPointDistance;
+            _recordingService.MinimumPointDistance = 0.01; // Allow very close points for manual adds
+            _recordingService.RecordPosition(_gpsService.CurrentPosition);
+            _recordingService.MinimumPointDistance = savedMinDistance; // Restore
+
+            StatusText = $"Point added - Total: {PointCount}";
+        }
+        else if (_pointRecordingMode == "notch")
+        {
+            // Auto-start notch recording if not already started
+            if (!IsRecordingNotch)
+            {
+                StartRecordingNotch();
+            }
+
+            if (_currentField == null)
+            {
+                StatusText = "No field loaded";
+                return;
+            }
+
+            var (e, n) = CoordinateConversionService.ToLocal(_gpsService.CurrentPosition, _currentField.Origin);
+            NotchPoints.Add(new BoundaryPoint(e, n, 0));
+            NotchPointCount = NotchPoints.Count;
+            _visualizationControl?.SetNotchPoints(NotchPoints);
+            StatusText = $"Notch point added - Total: {NotchPointCount}";
+            Console.WriteLine($"[VIEWMODEL] Manually added notch point #{NotchPointCount}: E={e:F2}m, N={n:F2}m");
+        }
+    }
+
+    [RelayCommand]
+    private void DeleteLastPoint()
+    {
+        if (_pointRecordingMode == "boundary")
+        {
+            RemoveLastPoint();
+        }
+        else if (_pointRecordingMode == "notch")
+        {
+            if (NotchPoints.Count > 0)
+            {
+                NotchPoints.RemoveAt(NotchPoints.Count - 1);
+                NotchPointCount = NotchPoints.Count;
+                _visualizationControl?.SetNotchPoints(NotchPoints);
+                Console.WriteLine($"[VIEWMODEL] Deleted last notch point. Remaining: {NotchPointCount}");
+            }
+        }
+    }
+
+    [RelayCommand]
+    private void ToggleContinuousRecording()
+    {
+        IsRecordingContinuously = !IsRecordingContinuously;
+        UpdateContinuousRecordingButtonText();
+
+        if (_pointRecordingMode == "boundary")
+        {
+            IsRecording = IsRecordingContinuously;
+            if (IsRecordingContinuously)
+            {
+                StartRecording();
+            }
+            else
+            {
+                // Don't stop recording completely, just pause continuous mode
+                StatusText = "Continuous recording paused - use Add Point for manual points";
+            }
+        }
+        else if (_pointRecordingMode == "notch")
+        {
+            IsRecordingNotch = IsRecordingContinuously;
+            if (IsRecordingContinuously)
+            {
+                StartRecordingNotch();
+            }
+            else
+            {
+                StatusText = "Continuous recording paused - use Add Point for manual points";
+            }
+        }
+
+        Console.WriteLine($"[VIEWMODEL] Continuous recording: {IsRecordingContinuously}");
+    }
+
+    [RelayCommand]
+    private void FinishPointRecording()
+    {
+        if (_pointRecordingMode == "boundary")
+        {
+            StopRecording();
+        }
+        else if (_pointRecordingMode == "notch")
+        {
+            StopRecordingNotch();
+
+            // Always open the notch dialog (validation status is shown in the dialog)
+            Console.WriteLine($"[VIEWMODEL] FinishPointRecording for notch mode. NotchPoints={NotchPointCount}, CanApplyNotch={CanApplyNotch}");
+
+            var mainWindow = GetMainWindow();
+            if (mainWindow != null)
+            {
+                Console.WriteLine($"[VIEWMODEL] Opening BoundaryNotchDialog");
+                var dialog = new Views.Dialogs.BoundaryNotchDialog
+                {
+                    DataContext = this
+                };
+                dialog.Show(mainWindow);
+            }
+            else
+            {
+                Console.WriteLine($"[VIEWMODEL] ERROR: mainWindow is null!");
+            }
+        }
+
+        // Reset continuous recording state
+        IsRecordingContinuously = false;
+        UpdateContinuousRecordingButtonText();
+    }
+
+    private void UpdateContinuousRecordingButtonText()
+    {
+        ContinuousRecordingButtonText = IsRecordingContinuously
+            ? "Stop Continuous"
+            : "Start Continuous";
     }
 
     [RelayCommand]
@@ -914,11 +1089,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [RelayCommand]
     private void StopRecordingNotch()
     {
-        if (!IsRecordingNotch)
-        {
-            return;
-        }
-
+        // Always validate, even if continuous recording was already stopped
         IsRecordingNotch = false;
 
         // Check if we have enough points and if they cross the boundary twice
@@ -953,8 +1124,14 @@ public partial class MainWindowViewModel : ViewModelBase
         var firstPoint = NotchPoints[0];
         var lastPoint = NotchPoints[NotchPoints.Count - 1];
 
-        bool firstOutside = !IsPointInsideBoundary(firstPoint);
-        bool lastOutside = !IsPointInsideBoundary(lastPoint);
+        bool firstInside = IsPointInsideBoundary(firstPoint);
+        bool lastInside = IsPointInsideBoundary(lastPoint);
+        bool firstOutside = !firstInside;
+        bool lastOutside = !lastInside;
+
+        Console.WriteLine($"[VIEWMODEL] First point E={firstPoint.Easting:F2}, N={firstPoint.Northing:F2}, inside={firstInside}");
+        Console.WriteLine($"[VIEWMODEL] Last point E={lastPoint.Easting:F2}, N={lastPoint.Northing:F2}, inside={lastInside}");
+        Console.WriteLine($"[VIEWMODEL] Boundary has {_currentField?.Boundary?.OuterBoundary?.Points.Count ?? 0} points");
 
         if (!firstOutside || !lastOutside)
         {
@@ -1236,12 +1413,14 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         if (_currentField?.Boundary?.OuterBoundary == null)
         {
+            Console.WriteLine($"[VIEWMODEL] IsPointInsideBoundary: No boundary exists");
             return false;
         }
 
         var boundaryPoints = _currentField.Boundary.OuterBoundary.Points;
         if (boundaryPoints.Count < 3)
         {
+            Console.WriteLine($"[VIEWMODEL] IsPointInsideBoundary: Boundary has less than 3 points");
             return false;
         }
 
@@ -1275,7 +1454,9 @@ public partial class MainWindowViewModel : ViewModelBase
         }
 
         // Odd number of crossings means inside, even means outside
-        return (crossings % 2) == 1;
+        bool isInside = (crossings % 2) == 1;
+        Console.WriteLine($"[VIEWMODEL] IsPointInsideBoundary: point({px:F2}, {py:F2}), crossings={crossings}, inside={isInside}");
+        return isInside;
     }
 
     private void OnConnectionStatusChanged(object? sender, bool isConnected)
