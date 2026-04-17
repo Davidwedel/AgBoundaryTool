@@ -151,6 +151,9 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private string _pointRecordingMode = ""; // "boundary", "notch", or "inner"
 
+    // Dialog references for auto-closing
+    private Avalonia.Controls.Window? _fieldManagementDialog;
+
     public ObservableCollection<string> AvailablePorts { get; } = new ObservableCollection<string>();
     public ObservableCollection<BoundaryPoint> BoundaryPoints { get; } = new ObservableCollection<BoundaryPoint>();
     public ObservableCollection<BoundaryPoint> NotchPoints { get; } = new ObservableCollection<BoundaryPoint>();
@@ -263,7 +266,7 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             DataContext = this
         };
-        dialog.Show(mainWindow);
+        ShowDialogOnLeft(dialog, mainWindow);
     }
 
     [RelayCommand]
@@ -276,7 +279,7 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             DataContext = this
         };
-        dialog.Show(mainWindow);
+        ShowDialogOnLeft(dialog, mainWindow);
     }
 
     [RelayCommand]
@@ -285,11 +288,11 @@ public partial class MainWindowViewModel : ViewModelBase
         var mainWindow = GetMainWindow();
         if (mainWindow == null) return;
 
-        var dialog = new Views.Dialogs.FieldManagementDialog
+        _fieldManagementDialog = new Views.Dialogs.FieldManagementDialog
         {
             DataContext = this
         };
-        dialog.Show(mainWindow);
+        ShowDialogOnLeft(_fieldManagementDialog, mainWindow);
     }
 
     [RelayCommand]
@@ -309,7 +312,7 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             DataContext = this
         };
-        dialog.Show(mainWindow);
+        ShowDialogOnLeft(dialog, mainWindow);
     }
 
     [RelayCommand]
@@ -329,7 +332,7 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             DataContext = this
         };
-        dialog.Show(mainWindow);
+        ShowDialogOnLeft(dialog, mainWindow);
     }
 
     [RelayCommand]
@@ -361,7 +364,7 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             DataContext = this
         };
-        dialog.Show(mainWindow);
+        ShowDialogOnLeft(dialog, mainWindow);
     }
 
     [RelayCommand]
@@ -387,7 +390,7 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             DataContext = this
         };
-        dialog.Show(mainWindow);
+        ShowDialogOnLeft(dialog, mainWindow);
     }
 
     private Avalonia.Controls.Window? GetMainWindow()
@@ -395,6 +398,26 @@ public partial class MainWindowViewModel : ViewModelBase
         return Avalonia.Application.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
             ? desktop.MainWindow
             : null;
+    }
+
+    private void ShowDialogOnLeft(Avalonia.Controls.Window dialog, Avalonia.Controls.Window owner)
+    {
+        // Set to manual positioning
+        dialog.WindowStartupLocation = Avalonia.Controls.WindowStartupLocation.Manual;
+
+        // Show the dialog first
+        dialog.Show(owner);
+
+        // Position it on the left side of the owner window
+        var ownerPos = owner.Position;
+        var ownerWidth = owner.Width;
+        var dialogWidth = dialog.Width;
+
+        // Position dialog on left side with 20px margin
+        dialog.Position = new Avalonia.PixelPoint(
+            ownerPos.X + 20,
+            ownerPos.Y + 50
+        );
     }
 
     [RelayCommand]
@@ -748,7 +771,7 @@ public partial class MainWindowViewModel : ViewModelBase
                 {
                     DataContext = this
                 };
-                dialog.Show(mainWindow);
+                ShowDialogOnLeft(dialog, mainWindow);
             }
             else
             {
@@ -770,7 +793,7 @@ public partial class MainWindowViewModel : ViewModelBase
                 {
                     DataContext = this
                 };
-                dialog.Show(mainWindow);
+                ShowDialogOnLeft(dialog, mainWindow);
             }
             else
             {
@@ -907,6 +930,13 @@ public partial class MainWindowViewModel : ViewModelBase
 
             // Save to settings
             SaveSettings();
+
+            // Close field management dialog if open
+            if (_fieldManagementDialog != null)
+            {
+                _fieldManagementDialog.Close();
+                _fieldManagementDialog = null;
+            }
         }
         catch (Exception ex)
         {
