@@ -160,9 +160,13 @@ public partial class MainWindowViewModel : ViewModelBase
     // Dialog references for auto-closing
     private Avalonia.Controls.Window? _fieldManagementDialog;
 
+    // Flag properties
+    private int _nextFlagId = 1;
+
     public ObservableCollection<string> AvailablePorts { get; } = new ObservableCollection<string>();
     public ObservableCollection<BoundaryPoint> BoundaryPoints { get; } = new ObservableCollection<BoundaryPoint>();
     public ObservableCollection<BoundaryPoint> NotchPoints { get; } = new ObservableCollection<BoundaryPoint>();
+    public ObservableCollection<Flag> Flags { get; } = new ObservableCollection<Flag>();
 
     public MainWindowViewModel()
     {
@@ -1654,6 +1658,98 @@ public partial class MainWindowViewModel : ViewModelBase
             _gpsService.Simulator.StepDistance = 0; // Stop instantly, no coast
             StatusText = "Stopped";
         }
+    }
+
+    [RelayCommand]
+    private void OpenFlagManagementDialog()
+    {
+        var mainWindow = GetMainWindow();
+        if (mainWindow == null) return;
+
+        var dialog = new Views.Dialogs.FlagManagementDialog
+        {
+            DataContext = this
+        };
+        ShowDialogOnLeft(dialog, mainWindow);
+    }
+
+    [RelayCommand]
+    private void AddFlagAtVehicle()
+    {
+        if (_gpsService.CurrentPosition == null)
+        {
+            StatusText = "No GPS position available";
+            return;
+        }
+
+        // Get origin
+        Position origin;
+        if (_currentField != null)
+        {
+            origin = _currentField.Origin;
+        }
+        else if (_temporaryOrigin != null)
+        {
+            origin = _temporaryOrigin;
+        }
+        else
+        {
+            StatusText = "No origin set - cannot add flag";
+            return;
+        }
+
+        // Convert to local coordinates
+        var (easting, northing) = CoordinateConversionService.ToLocal(_gpsService.CurrentPosition, origin);
+
+        // Get next available color
+        var color = GetNextFlagColor();
+
+        // Create flag
+        var flag = new Flag(easting, northing, color, _nextFlagId++);
+        Flags.Add(flag);
+
+        // Update visualization
+        _visualizationControl?.SetFlags(Flags);
+
+        StatusText = $"Flag added: {flag.Name}";
+        Console.WriteLine($"[VIEWMODEL] Flag added at E={easting:F2}, N={northing:F2}");
+    }
+
+    [RelayCommand]
+    private void DeleteFlag(Flag flag)
+    {
+        if (flag == null) return;
+
+        Flags.Remove(flag);
+        _visualizationControl?.SetFlags(Flags);
+        StatusText = $"Deleted {flag.Name}";
+        Console.WriteLine($"[VIEWMODEL] Flag deleted: {flag.Name}");
+    }
+
+    [RelayCommand]
+    private void DeleteAllFlags()
+    {
+        int count = Flags.Count;
+        Flags.Clear();
+        _visualizationControl?.SetFlags(Flags);
+        StatusText = $"Deleted {count} flag(s)";
+        Console.WriteLine($"[VIEWMODEL] All flags deleted ({count} total)");
+    }
+
+    private FlagColor GetNextFlagColor()
+    {
+        var allColors = Enum.GetValues<FlagColor>();
+        var usedColors = Flags.Select(f => f.Color).ToHashSet();
+
+        // Find first unused color
+        foreach (var color in allColors)
+        {
+            if (!usedColors.Contains(color))
+                return color;
+        }
+
+        // All colors used, cycle through
+        return allColors[Flags.Count % allColors.Length];
     }
 
     [RelayCommand]

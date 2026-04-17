@@ -20,6 +20,7 @@ public class BoundaryVisualizationControl : Control
     private List<BoundaryPoint> _boundaryPoints = new List<BoundaryPoint>();
     private List<List<BoundaryPoint>> _innerBoundaries = new List<List<BoundaryPoint>>();
     private List<BoundaryPoint> _notchPoints = new List<BoundaryPoint>();
+    private List<Flag> _flags = new List<Flag>();
     private Position? _vehiclePosition;
     private double _zoom = 1.0;
     private Point _offset = new Point(0, 0);
@@ -53,6 +54,7 @@ public class BoundaryVisualizationControl : Control
     private readonly SolidColorBrush _vehicleBrush = new SolidColorBrush(Color.FromRgb(255, 0, 0));
     private readonly SolidColorBrush _notchBrush = new SolidColorBrush(Color.FromRgb(200, 0, 200)); // Purple/Magenta
     private readonly SolidColorBrush _selectedBrush = new SolidColorBrush(Color.FromRgb(255, 255, 0)); // Yellow
+    private readonly SolidColorBrush _flagTextBrush = new SolidColorBrush(Color.FromRgb(255, 255, 255)); // White
     private readonly SolidColorBrush _backgroundBrush = new SolidColorBrush(Color.FromRgb(40, 40, 40));
     private readonly Pen _gridPen;
     private readonly Pen _boundaryPen;
@@ -327,6 +329,12 @@ public class BoundaryVisualizationControl : Control
         Dispatcher.UIThread.Post(InvalidateVisual, DispatcherPriority.Render);
     }
 
+    public void SetFlags(IEnumerable<Flag> flags)
+    {
+        _flags = flags.ToList();
+        Dispatcher.UIThread.Post(InvalidateVisual);
+    }
+
     /// <summary>
     /// Enable inner boundary selection mode (clicking selects inner boundaries)
     /// </summary>
@@ -372,6 +380,7 @@ public class BoundaryVisualizationControl : Control
         _boundaryPoints.Clear();
         _innerBoundaries.Clear();
         _notchPoints.Clear();
+        _flags.Clear();
         _vehiclePosition = null;
         _manualPanActive = false; // Reset manual pan flag
         _selectedPointIndices.Clear();
@@ -587,6 +596,9 @@ public class BoundaryVisualizationControl : Control
         // Draw notch points
         DrawNotchPoints(context);
 
+        // Draw flags
+        DrawFlags(context);
+
         // Draw vehicle crosshair
         DrawVehicle(context);
 
@@ -751,6 +763,90 @@ public class BoundaryVisualizationControl : Control
                 screenPos.X - PointRadius, screenPos.Y - PointRadius,
                 PointRadius * 2, PointRadius * 2));
             context.DrawGeometry(_notchBrush, _notchPen, circle);
+        }
+    }
+
+    private void DrawFlags(DrawingContext context)
+    {
+        if (_flags.Count == 0) return;
+
+        var typeface = new Typeface("Arial");
+        var fontSize = 11.0;
+
+        foreach (var flag in _flags)
+        {
+            var screenPos = WorldToScreen(flag.Easting, flag.Northing);
+
+            // Parse hex color
+            var hexColor = Flag.ColorToHex(flag.Color);
+            var color = Color.Parse(hexColor);
+            var flagBrush = new SolidColorBrush(color);
+
+            // Draw flag pole (vertical line)
+            var poleLength = 30.0;
+            context.DrawLine(
+                new Pen(flagBrush, 2.0),
+                screenPos,
+                new Point(screenPos.X, screenPos.Y - poleLength)
+            );
+
+            // Draw flag triangle
+            var flagWidth = 16.0;
+            var flagHeight = 12.0;
+            var flagTop = new Point(screenPos.X, screenPos.Y - poleLength);
+            var flagTopRight = new Point(screenPos.X + flagWidth, screenPos.Y - poleLength + flagHeight / 2);
+            var flagBottom = new Point(screenPos.X, screenPos.Y - poleLength + flagHeight);
+
+            var flagGeometry = new StreamGeometry();
+            using (var ctx = flagGeometry.Open())
+            {
+                ctx.BeginFigure(flagTop, true);
+                ctx.LineTo(flagTopRight);
+                ctx.LineTo(flagBottom);
+                ctx.EndFigure(true);
+            }
+
+            context.DrawGeometry(flagBrush, new Pen(Brushes.Black, 1.0), flagGeometry);
+
+            // Draw flag name below with black outline
+            var blackText = new FormattedText(
+                flag.Name,
+                System.Globalization.CultureInfo.CurrentCulture,
+                FlowDirection.LeftToRight,
+                typeface,
+                fontSize,
+                Brushes.Black
+            );
+
+            var whiteText = new FormattedText(
+                flag.Name,
+                System.Globalization.CultureInfo.CurrentCulture,
+                FlowDirection.LeftToRight,
+                typeface,
+                fontSize,
+                _flagTextBrush
+            );
+
+            // Draw black outline
+            for (int dx = -1; dx <= 1; dx++)
+            {
+                for (int dy = -1; dy <= 1; dy++)
+                {
+                    if (dx != 0 || dy != 0)
+                    {
+                        context.DrawText(
+                            blackText,
+                            new Point(screenPos.X - blackText.Width / 2 + dx, screenPos.Y + 5 + dy)
+                        );
+                    }
+                }
+            }
+
+            // Draw white text on top
+            context.DrawText(
+                whiteText,
+                new Point(screenPos.X - whiteText.Width / 2, screenPos.Y + 5)
+            );
         }
     }
 

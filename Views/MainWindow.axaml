@@ -62,6 +62,12 @@
                                VerticalAlignment="Center" HorizontalAlignment="Center"/>
                 </Button>
 
+                <Button Command="{Binding OpenFlagManagementDialogCommand}"
+                        Height="60" Width="60"
+                        ToolTip.Tip="Flags">
+                    <Image Source="/btnImages/FlagRed.png" Stretch="Uniform"/>
+                </Button>
+
             </StackPanel>
         </Border>
 
