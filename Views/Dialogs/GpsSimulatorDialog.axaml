@@ -47,19 +47,25 @@
                     </StackPanel>
 
                     <Grid ColumnDefinitions="*,*,*">
-                        <Button Grid.Column="0" Content="⏴ Backward"
-                                Command="{Binding SimulatorAccelerateBackwardCommand}"
+                        <Button Grid.Column="0" Content="− Slow Down"
+                                Command="{Binding SimulatorSlowDownCommand}"
                                 Margin="0,0,2,0"/>
-                        <Button Grid.Column="1" Content="▶ Forward"
-                                Command="{Binding SimulatorAccelerateForwardCommand}"
-                                Margin="2,0,2,0"/>
-                        <Button Grid.Column="2" Content="⏸ Stop"
+                        <Button Grid.Column="1" Content="⏸ Stop"
                                 Command="{Binding SimulatorStopAccelerationCommand}"
+                                Margin="2,0,2,0"/>
+                        <Button Grid.Column="2" Content="+ Speed Up"
+                                Command="{Binding SimulatorSpeedUpCommand}"
                                 Margin="2,0,0,0"/>
                     </Grid>
 
-                    <Button Content="Reset Position"
-                            Command="{Binding SimulatorResetPositionCommand}"/>
+                    <Grid ColumnDefinitions="*,*">
+                        <Button Grid.Column="0" Content="↻ Reverse Direction"
+                                Command="{Binding SimulatorReverseDirectionCommand}"
+                                Margin="0,0,2,0"/>
+                        <Button Grid.Column="1" Content="Reset Position"
+                                Command="{Binding SimulatorResetPositionCommand}"
+                                Margin="2,0,0,0"/>
+                    </Grid>
 
                     <TextBlock Text="Use WASD keys: W=Forward, S=Backward, A=Left, D=Right"
                                FontSize="11" Foreground="Gray" TextWrapping="Wrap"/>

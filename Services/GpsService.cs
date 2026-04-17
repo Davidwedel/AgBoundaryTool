@@ -24,6 +24,7 @@ public class GpsService : IDisposable
     private GpsSimulatorService? _simulator;
     private System.Timers.Timer? _simulatorTimer;
     private bool _isSimulatorMode = false;
+    private NtripService? _ntripService;
 
     /// <summary>
     /// Event fired when a new GPS position is received
@@ -56,11 +57,90 @@ public class GpsService : IDisposable
     public GpsSimulatorService? Simulator => _simulator;
 
     /// <summary>
+    /// Get the NTRIP service
+    /// </summary>
+    public NtripService? NtripService => _ntripService;
+
+    /// <summary>
+    /// Is NTRIP connected
+    /// </summary>
+    public bool IsNtripConnected => _ntripService?.IsConnected ?? false;
+
+    /// <summary>
     /// Get list of available serial ports
     /// </summary>
     public static string[] GetAvailablePorts()
     {
         return SerialPort.GetPortNames();
+    }
+
+    /// <summary>
+    /// Connect to NTRIP caster for RTK corrections
+    /// </summary>
+    public async Task<bool> ConnectNtripAsync(string host, int port, string mountPoint,
+        string username, string password, bool useSsl = false)
+    {
+        try
+        {
+            if (_ntripService == null)
+            {
+                _ntripService = new NtripService();
+                _ntripService.DataReceived += OnNtripDataReceived;
+            }
+
+            // Use current position if available for initial GGA
+            double lat = CurrentPosition?.Latitude ?? 0;
+            double lon = CurrentPosition?.Longitude ?? 0;
+
+            bool connected = await _ntripService.ConnectAsync(host, port, mountPoint, username, password, lat, lon, useSsl);
+
+            if (connected)
+            {
+                Console.WriteLine("[GPS] NTRIP connected successfully");
+            }
+
+            return connected;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[GPS] NTRIP connection error: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Disconnect from NTRIP caster
+    /// </summary>
+    public async Task DisconnectNtripAsync()
+    {
+        if (_ntripService != null)
+        {
+            await _ntripService.DisconnectAsync();
+        }
+    }
+
+    /// <summary>
+    /// Handle RTCM data received from NTRIP and forward to GPS receiver
+    /// </summary>
+    private void OnNtripDataReceived(object? sender, byte[] data)
+    {
+        try
+        {
+            // Forward RTCM data to GPS receiver over USB
+            if (_serialPort?.IsOpen == true)
+            {
+                _serialPort.Write(data, 0, data.Length);
+                Console.WriteLine($"[GPS] Forwarded {data.Length} bytes of RTCM data to GPS receiver");
+            }
+            else
+            {
+                Console.WriteLine($"[GPS] Received {data.Length} bytes of RTCM data but no GPS port open");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[GPS] Error forwarding RTCM data: {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -237,6 +317,7 @@ public class GpsService : IDisposable
                 Console.WriteLine($"[GPS] Fix quality: {fixQuality}, Satellites: {satellites}, Position: {latitude:F6}, {longitude:F6}");
             }
 
+            OnPositionReceivedInternal(position);
             PositionReceived?.Invoke(this, position);
         }
         catch (Exception ex)
@@ -279,6 +360,7 @@ public class GpsService : IDisposable
             position.Heading = heading;
 
             CurrentPosition = position;
+            OnPositionReceivedInternal(position);
             PositionReceived?.Invoke(this, position);
         }
         catch { }
@@ -434,9 +516,20 @@ public class GpsService : IDisposable
         PositionReceived?.Invoke(this, position);
     }
 
+    private void OnPositionReceivedInternal(Position position)
+    {
+        // Update NTRIP with current position (some casters require periodic GGA updates)
+        if (_ntripService?.IsConnected == true)
+        {
+            _ = _ntripService.UpdatePositionAsync(position.Latitude, position.Longitude);
+        }
+    }
+
     public void Dispose()
     {
         StopSimulator();
         DisconnectAsync().Wait();
+        DisconnectNtripAsync().Wait();
+        _ntripService?.Dispose();
     }
 }

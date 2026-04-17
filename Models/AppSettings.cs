@@ -20,6 +20,15 @@ public class AppSettings
     public string LastGpsPort { get; set; } = string.Empty;
     public int GpsBaudRate { get; set; } = 9600;
 
+    // NTRIP settings
+    public bool NtripEnabled { get; set; } = false;
+    public string NtripHost { get; set; } = string.Empty;
+    public int NtripPort { get; set; } = 2101;
+    public string NtripMountPoint { get; set; } = string.Empty;
+    public string NtripUsername { get; set; } = string.Empty;
+    public string NtripPassword { get; set; } = string.Empty;
+    public bool NtripUseSsl { get; set; } = false;
+
     // Simulator settings
     public bool SimulatorWasRunning { get; set; } = false;
     public double SimulatorLatitude { get; set; } = 39.828234;
