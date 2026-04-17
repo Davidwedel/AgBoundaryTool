@@ -1,0 +1,73 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:AgBoundaryTool.ViewModels"
+        x:Class="AgBoundaryTool.Views.Dialogs.GpsSimulatorDialog"
+        x:DataType="vm:MainWindowViewModel"
+        Title="GPS Simulator"
+        Width="400" Height="500"
+        CanResize="false">
+
+    <Border BorderBrush="DarkMagenta" BorderThickness="2" CornerRadius="5" Padding="10" Margin="10">
+        <StackPanel Spacing="8">
+            <TextBlock Text="GPS Simulator" FontWeight="Bold" FontSize="16"/>
+
+            <StackPanel Spacing="5">
+                <TextBlock Text="Start Position:"/>
+                <Grid ColumnDefinitions="Auto,*">
+                    <TextBlock Grid.Column="0" Text="Lat:" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                    <TextBox Grid.Column="1" Text="{Binding SimulatorLatitude}"/>
+                </Grid>
+                <Grid ColumnDefinitions="Auto,*">
+                    <TextBlock Grid.Column="0" Text="Lon:" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                    <TextBox Grid.Column="1" Text="{Binding SimulatorLongitude}"/>
+                </Grid>
+            </StackPanel>
+
+            <Grid ColumnDefinitions="*,*">
+                <Button Grid.Column="0" Content="Start Simulator"
+                        Command="{Binding StartSimulatorCommand}"
+                        IsEnabled="{Binding !IsConnected}"
+                        Margin="0,0,2.5,0"/>
+                <Button Grid.Column="1" Content="Stop Simulator"
+                        Command="{Binding StopSimulatorGpsCommand}"
+                        IsEnabled="{Binding IsSimulatorMode}"
+                        Margin="2.5,0,0,0"/>
+            </Grid>
+
+            <Border Background="#F5F5F5" Padding="8" CornerRadius="3"
+                    IsVisible="{Binding IsSimulatorMode}">
+                <StackPanel Spacing="5">
+                    <TextBlock Text="Controls:" FontWeight="SemiBold"/>
+
+                    <StackPanel Spacing="3">
+                        <TextBlock Text="Steer Angle (°):"/>
+                        <Slider Minimum="-40" Maximum="40" Value="{Binding SimulatorSteerAngle}"/>
+                        <TextBlock Text="{Binding SimulatorSteerAngle, StringFormat='{}{0:F1}°'}"
+                                   HorizontalAlignment="Center"/>
+                    </StackPanel>
+
+                    <Grid ColumnDefinitions="*,*,*">
+                        <Button Grid.Column="0" Content="⏴ Backward"
+                                Command="{Binding SimulatorAccelerateBackwardCommand}"
+                                Margin="0,0,2,0"/>
+                        <Button Grid.Column="1" Content="▶ Forward"
+                                Command="{Binding SimulatorAccelerateForwardCommand}"
+                                Margin="2,0,2,0"/>
+                        <Button Grid.Column="2" Content="⏸ Stop"
+                                Command="{Binding SimulatorStopAccelerationCommand}"
+                                Margin="2,0,0,0"/>
+                    </Grid>
+
+                    <Button Content="Reset Position"
+                            Command="{Binding SimulatorResetPositionCommand}"/>
+
+                    <TextBlock Text="Use WASD keys: W=Forward, S=Backward, A=Left, D=Right"
+                               FontSize="11" Foreground="Gray" TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+
+            <Button Content="Close" HorizontalAlignment="Right"
+                    Click="CloseButton_Click" Margin="0,10,0,0"/>
+        </StackPanel>
+    </Border>
+</Window>

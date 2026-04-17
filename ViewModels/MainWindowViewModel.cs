@@ -166,6 +166,46 @@ public partial class MainWindowViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private void OpenGpsConnectionDialog()
+    {
+        var dialog = new Views.Dialogs.GpsConnectionDialog
+        {
+            DataContext = this
+        };
+        dialog.Show();
+    }
+
+    [RelayCommand]
+    private void OpenGpsSimulatorDialog()
+    {
+        var dialog = new Views.Dialogs.GpsSimulatorDialog
+        {
+            DataContext = this
+        };
+        dialog.Show();
+    }
+
+    [RelayCommand]
+    private void OpenFieldManagementDialog()
+    {
+        var dialog = new Views.Dialogs.FieldManagementDialog
+        {
+            DataContext = this
+        };
+        dialog.Show();
+    }
+
+    [RelayCommand]
+    private void OpenBoundaryRecordingDialog()
+    {
+        var dialog = new Views.Dialogs.BoundaryRecordingDialog
+        {
+            DataContext = this
+        };
+        dialog.Show();
+    }
+
+    [RelayCommand]
     private void RefreshPorts()
     {
         var ports = GpsService.GetAvailablePorts();
