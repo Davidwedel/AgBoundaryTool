@@ -12,7 +12,7 @@
             <TextBlock Text="Modify Inner Boundary" FontWeight="Bold" FontSize="16"/>
 
             <TextBlock TextWrapping="Wrap" FontSize="12" Foreground="Gray">
-                Select an inner boundary and operation type to modify.
+                Click on an inner boundary in the visualization (highlighted in orange) or select from dropdown below. Then choose notch or bulge operation.
             </TextBlock>
 
             <!-- Inner Boundary Selection -->

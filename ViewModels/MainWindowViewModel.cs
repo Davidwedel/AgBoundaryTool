@@ -95,6 +95,12 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     private int _selectedInnerBoundaryIndex = 0;
 
+    partial void OnSelectedInnerBoundaryIndexChanged(int value)
+    {
+        // Update visualization to highlight the selected inner boundary
+        _visualizationControl?.SetSelectedInnerBoundary(value);
+    }
+
     [ObservableProperty]
     private bool _isInnerNotchOperation = true;
 
@@ -352,7 +358,16 @@ public partial class MainWindowViewModel : ViewModelBase
             InnerBoundaryChoices.Add($"Inner Boundary {i + 1} ({ib.Points.Count} points, {ib.AreaHectares:F2} ha)");
         }
 
-        SelectedInnerBoundaryIndex = 0;
+        // Enable inner boundary selection mode in visualization
+        _visualizationControl?.EnableInnerBoundarySelectionMode();
+
+        // Get currently selected inner boundary from visualization (if any)
+        int visualizationSelection = _visualizationControl?.GetSelectedInnerBoundary() ?? -1;
+        SelectedInnerBoundaryIndex = visualizationSelection >= 0 ? visualizationSelection : 0;
+
+        // Highlight the selected boundary in visualization
+        _visualizationControl?.SetSelectedInnerBoundary(SelectedInnerBoundaryIndex);
+
         IsInnerNotchOperation = true;
         IsInnerBulgeOperation = false;
         CanStartInnerModify = true;
@@ -361,7 +376,15 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             DataContext = this
         };
+
+        // When dialog closes, disable selection mode
+        dialog.Closed += (s, e) =>
+        {
+            _visualizationControl?.DisableInnerBoundarySelectionMode();
+        };
+
         dialog.Show(mainWindow);
+        StatusText = "Click on an inner boundary in the visualization to select it";
     }
 
     [RelayCommand]
@@ -1113,6 +1136,15 @@ public partial class MainWindowViewModel : ViewModelBase
 
         // Subscribe to vehicle snap requests (right-click)
         _visualizationControl.VehicleSnapRequested += OnVehicleSnapRequested;
+
+        // Subscribe to inner boundary selection
+        _visualizationControl.InnerBoundarySelected += OnInnerBoundarySelected;
+    }
+
+    private void OnInnerBoundarySelected(object? sender, int boundaryIndex)
+    {
+        SelectedInnerBoundaryIndex = boundaryIndex;
+        Console.WriteLine($"[VIEWMODEL] Inner boundary {boundaryIndex} selected from visualization");
     }
 
     private void OnVehicleSnapRequested(object? sender, (double easting, double northing) localCoords)

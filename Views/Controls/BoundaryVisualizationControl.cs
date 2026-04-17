@@ -35,6 +35,10 @@ public class BoundaryVisualizationControl : Control
     private HashSet<int> _selectedPointIndices = new HashSet<int>();
     private int? _firstSelectedIndex = null; // For range selection
 
+    // Inner boundary selection state
+    private int _selectedInnerBoundaryIndex = -1; // -1 = none selected
+    private bool _innerBoundarySelectionMode = false; // When true, clicking selects inner boundaries
+
     // Visual settings
     private const double GridSize = 50.0; // meters
     private const double CrosshairSize = 20.0; // pixels
@@ -45,6 +49,7 @@ public class BoundaryVisualizationControl : Control
     private readonly SolidColorBrush _gridBrush = new SolidColorBrush(Color.FromArgb(40, 128, 128, 128));
     private readonly SolidColorBrush _boundaryBrush = new SolidColorBrush(Color.FromRgb(0, 200, 0)); // Green
     private readonly SolidColorBrush _innerBoundaryBrush = new SolidColorBrush(Color.FromRgb(200, 0, 0)); // Red
+    private readonly SolidColorBrush _selectedInnerBoundaryBrush = new SolidColorBrush(Color.FromRgb(255, 165, 0)); // Orange - highlighted inner boundary
     private readonly SolidColorBrush _vehicleBrush = new SolidColorBrush(Color.FromRgb(255, 0, 0));
     private readonly SolidColorBrush _notchBrush = new SolidColorBrush(Color.FromRgb(200, 0, 200)); // Purple/Magenta
     private readonly SolidColorBrush _selectedBrush = new SolidColorBrush(Color.FromRgb(255, 255, 0)); // Yellow
@@ -52,6 +57,7 @@ public class BoundaryVisualizationControl : Control
     private readonly Pen _gridPen;
     private readonly Pen _boundaryPen;
     private readonly Pen _innerBoundaryPen;
+    private readonly Pen _selectedInnerBoundaryPen;
     private readonly Pen _vehiclePen;
     private readonly Pen _notchPen;
     private readonly Pen _selectedPen;
@@ -61,6 +67,7 @@ public class BoundaryVisualizationControl : Control
         _gridPen = new Pen(_gridBrush, 1.0);
         _boundaryPen = new Pen(_boundaryBrush, LineThickness);
         _innerBoundaryPen = new Pen(_innerBoundaryBrush, LineThickness);
+        _selectedInnerBoundaryPen = new Pen(_selectedInnerBoundaryBrush, LineThickness + 1);
         _vehiclePen = new Pen(_vehicleBrush, 2.0);
         _notchPen = new Pen(_notchBrush, LineThickness + 1);
         _selectedPen = new Pen(_selectedBrush, 3.0);
@@ -86,6 +93,9 @@ public class BoundaryVisualizationControl : Control
 
     // Event for notifying when vehicle should be snapped to a position (right-click)
     public event EventHandler<(double easting, double northing)>? VehicleSnapRequested;
+
+    // Event for notifying when an inner boundary is selected
+    public event EventHandler<int>? InnerBoundarySelected;
 
     private void OnPointerWheelChanged(object? sender, Avalonia.Input.PointerWheelEventArgs e)
     {
@@ -147,6 +157,21 @@ public class BoundaryVisualizationControl : Control
         {
             var mousePos = e.GetPosition(this);
             var modifiers = e.KeyModifiers;
+
+            // If in inner boundary selection mode, check for inner boundary clicks first
+            if (_innerBoundarySelectionMode)
+            {
+                int clickedInnerBoundary = FindInnerBoundaryAtPosition(mousePos);
+                if (clickedInnerBoundary >= 0)
+                {
+                    _selectedInnerBoundaryIndex = clickedInnerBoundary;
+                    InnerBoundarySelected?.Invoke(this, clickedInnerBoundary);
+                    Console.WriteLine($"[VISUALIZATION] Inner boundary {clickedInnerBoundary} selected");
+                    InvalidateVisual();
+                    e.Handled = true;
+                    return;
+                }
+            }
 
             // Check if clicking on a boundary point
             int? clickedPointIndex = FindPointAtPosition(mousePos);
@@ -303,6 +328,43 @@ public class BoundaryVisualizationControl : Control
     }
 
     /// <summary>
+    /// Enable inner boundary selection mode (clicking selects inner boundaries)
+    /// </summary>
+    public void EnableInnerBoundarySelectionMode()
+    {
+        _innerBoundarySelectionMode = true;
+        Console.WriteLine("[VISUALIZATION] Inner boundary selection mode enabled");
+    }
+
+    /// <summary>
+    /// Disable inner boundary selection mode
+    /// </summary>
+    public void DisableInnerBoundarySelectionMode()
+    {
+        _innerBoundarySelectionMode = false;
+        _selectedInnerBoundaryIndex = -1;
+        Console.WriteLine("[VISUALIZATION] Inner boundary selection mode disabled");
+        Dispatcher.UIThread.Post(InvalidateVisual, DispatcherPriority.Render);
+    }
+
+    /// <summary>
+    /// Set the selected inner boundary index
+    /// </summary>
+    public void SetSelectedInnerBoundary(int index)
+    {
+        _selectedInnerBoundaryIndex = index;
+        Dispatcher.UIThread.Post(InvalidateVisual, DispatcherPriority.Render);
+    }
+
+    /// <summary>
+    /// Get the currently selected inner boundary index (-1 if none)
+    /// </summary>
+    public int GetSelectedInnerBoundary()
+    {
+        return _selectedInnerBoundaryIndex;
+    }
+
+    /// <summary>
     /// Clear all visualizations
     /// </summary>
     public void Clear()
@@ -365,6 +427,40 @@ public class BoundaryVisualizationControl : Control
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Find which inner boundary (if any) contains the given screen position
+    /// Returns the inner boundary index, or -1 if none found
+    /// </summary>
+    private int FindInnerBoundaryAtPosition(Point screenPos)
+    {
+        const double hitRadius = 15.0; // pixels - click tolerance (slightly larger for whole boundaries)
+
+        for (int boundaryIdx = 0; boundaryIdx < _innerBoundaries.Count; boundaryIdx++)
+        {
+            var innerBoundary = _innerBoundaries[boundaryIdx];
+            if (innerBoundary.Count < 2) continue;
+
+            // Check if clicking near any point or line segment of this inner boundary
+            for (int i = 0; i < innerBoundary.Count; i++)
+            {
+                var point = innerBoundary[i];
+                var pointScreen = WorldToScreen(point.Easting, point.Northing);
+
+                double distance = Math.Sqrt(
+                    Math.Pow(screenPos.X - pointScreen.X, 2) +
+                    Math.Pow(screenPos.Y - pointScreen.Y, 2)
+                );
+
+                if (distance <= hitRadius)
+                {
+                    return boundaryIdx;
+                }
+            }
+        }
+
+        return -1;
     }
 
     /// <summary>
@@ -571,15 +667,22 @@ public class BoundaryVisualizationControl : Control
 
         int currentIndex = _boundaryPoints.Count; // Start indexing after outer boundary
 
-        foreach (var innerBoundary in _innerBoundaries)
+        for (int boundaryIdx = 0; boundaryIdx < _innerBoundaries.Count; boundaryIdx++)
         {
+            var innerBoundary = _innerBoundaries[boundaryIdx];
+
             if (innerBoundary.Count < 2)
             {
                 currentIndex += innerBoundary.Count;
                 continue;
             }
 
-            // Draw inner boundary lines (red)
+            // Check if this inner boundary is selected for highlighting
+            bool isBoundarySelected = (boundaryIdx == _selectedInnerBoundaryIndex);
+            var pen = isBoundarySelected ? _selectedInnerBoundaryPen : _innerBoundaryPen;
+            var brush = isBoundarySelected ? _selectedInnerBoundaryBrush : _innerBoundaryBrush;
+
+            // Draw inner boundary lines (red or orange if selected)
             for (int i = 0; i < innerBoundary.Count; i++)
             {
                 var p1 = innerBoundary[i];
@@ -588,17 +691,17 @@ public class BoundaryVisualizationControl : Control
                 var screen1 = WorldToScreen(p1.Easting, p1.Northing);
                 var screen2 = WorldToScreen(p2.Easting, p2.Northing);
 
-                context.DrawLine(_innerBoundaryPen, screen1, screen2);
+                context.DrawLine(pen, screen1, screen2);
             }
 
-            // Draw inner boundary points (red rectangles, or yellow circles if selected)
+            // Draw inner boundary points (red/orange rectangles, or yellow circles if point selected)
             for (int i = 0; i < innerBoundary.Count; i++)
             {
                 var point = innerBoundary[i];
                 var screenPos = WorldToScreen(point.Easting, point.Northing);
-                bool isSelected = _selectedPointIndices.Contains(currentIndex + i);
+                bool isPointSelected = _selectedPointIndices.Contains(currentIndex + i);
 
-                if (isSelected)
+                if (isPointSelected)
                 {
                     // Draw selected points as larger yellow circles
                     double selectedRadius = PointRadius * 2;
@@ -609,9 +712,9 @@ public class BoundaryVisualizationControl : Control
                 }
                 else
                 {
-                    // Draw normal points as red rectangles
+                    // Draw normal points as red/orange rectangles
                     context.FillRectangle(
-                        _innerBoundaryBrush,
+                        brush,
                         new Rect(screenPos.X - PointRadius / 2, screenPos.Y - PointRadius / 2,
                                  PointRadius, PointRadius)
                     );

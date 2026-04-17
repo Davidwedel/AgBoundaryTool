@@ -99,9 +99,17 @@ Inner boundaries (holes/exclusions like ponds) can be modified with TWO operatio
 - **Bulge**: Expand inner boundary outward (makes hole bigger - reduces farmable area)
 
 The feature uses THREE dialogs in sequence:
-1. **InnerBoundaryModifyDialog** - Select which inner boundary and operation (notch/bulge)
+1. **InnerBoundaryModifyDialog** - Select which inner boundary (click on visualization OR dropdown) and operation (notch/bulge)
 2. **PointRecordingDialog** - Record the modification path
 3. **InnerBoundaryApplyDialog** - Apply or cancel the modification
+
+**Inner Boundary Selection:**
+- Click INNER button to open modification dialog
+- Visualization enters selection mode - inner boundaries are clickable
+- Click on any inner boundary to select it (highlights in **orange**)
+- Can also use dropdown to select
+- Selected boundary shows in orange vs normal red
+- Selection mode auto-disables when dialog closes
 
 **Validation rules:**
 - Minimum 2 crossings with the target inner boundary (even number required)
@@ -120,6 +128,7 @@ The feature uses THREE dialogs in sequence:
 `BoundaryVisualizationControl` - Custom Avalonia control:
 - Green lines/points = Outer boundary
 - Red lines/points = Inner boundaries (holes/exclusions)
+- Orange lines/points = Selected inner boundary (in selection mode)
 - Purple/Magenta lines/circles = Notch/modification points
 - Yellow circles = Selected points
 - Red crosshair + yellow heading line = Vehicle
@@ -127,6 +136,7 @@ The feature uses THREE dialogs in sequence:
 - Mouse wheel zoom (centered on cursor)
 - Click-and-drag panning (disables auto-center)
 - Auto-centers on vehicle unless manually panned
+- Right-click = Snap simulator vehicle to position
 
 **Point Selection:**
 - Click point = Select single point
