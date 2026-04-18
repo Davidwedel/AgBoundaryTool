@@ -4,30 +4,31 @@ using AgBoundaryTool.ViewModels;
 
 namespace AgBoundaryTool.Views.Dialogs;
 
-public partial class InnerBoundaryApplyDialog : Window
+public partial class BoundaryApplyDialog : Window
 {
-    public InnerBoundaryApplyDialog()
+    public BoundaryApplyDialog()
     {
         InitializeComponent();
     }
 
     private void ApplyButton_Click(object? sender, RoutedEventArgs e)
     {
-        // Apply the modification to the inner boundary
+        // Apply the modification to the boundary
         if (DataContext is MainWindowViewModel viewModel)
         {
-            viewModel.ApplyInnerModificationCommand.Execute(null);
+            viewModel.ApplyBoundaryModificationCommand.Execute(null);
         }
 
+        // Close the dialog
         Close();
     }
 
     private void CancelButton_Click(object? sender, RoutedEventArgs e)
     {
-        // Cancel the modification (clears notch points)
+        // Cancel the modification (clears modification points)
         if (DataContext is MainWindowViewModel viewModel)
         {
-            viewModel.CancelNotchCommand.Execute(null);
+            viewModel.CancelBoundaryModificationCommand.Execute(null);
         }
 
         Close();

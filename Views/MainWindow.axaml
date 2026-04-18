@@ -48,18 +48,12 @@
                     <Image Source="/btnImages/Boundary.png" Stretch="Uniform"/>
                 </Button>
 
-                <Button Command="{Binding OpenBoundaryNotchDialogCommand}"
+                <Button Command="{Binding OpenBoundaryModifyDialogCommand}"
                         Height="60" Width="60"
-                        ToolTip.Tip="Boundary Notch">
-                    <TextBlock Text="NOTCH" FontSize="12" FontWeight="Bold"
-                               VerticalAlignment="Center" HorizontalAlignment="Center"/>
-                </Button>
-
-                <Button Command="{Binding OpenInnerBoundaryModifyDialogCommand}"
-                        Height="60" Width="60"
-                        ToolTip.Tip="Modify Inner Boundary">
-                    <TextBlock Text="INNER" FontSize="12" FontWeight="Bold"
-                               VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                        ToolTip.Tip="Notch/Bulge - Modify Boundaries">
+                    <TextBlock Text="NOTCH&#x0a;BULGE" FontSize="11" FontWeight="Bold"
+                               VerticalAlignment="Center" HorizontalAlignment="Center"
+                               TextAlignment="Center"/>
                 </Button>
 
                 <Button Command="{Binding OpenFlagManagementDialogCommand}"

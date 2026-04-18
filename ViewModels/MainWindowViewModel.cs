@@ -91,29 +91,87 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     private bool _canApplyNotch = false;
 
-    // Inner Boundary Modification properties
+    // Unified Boundary Modification properties
+    // SelectedBoundaryIndex: 0 = outer boundary, 1+ = inner boundaries (index - 1)
     [ObservableProperty]
-    private int _selectedInnerBoundaryIndex = 0;
+    private int _selectedBoundaryIndex = 0;
 
-    partial void OnSelectedInnerBoundaryIndexChanged(int value)
+    partial void OnSelectedBoundaryIndexChanged(int value)
     {
-        // Update visualization to highlight the selected inner boundary
-        _visualizationControl?.SetSelectedInnerBoundary(value);
+        // Update visualization to highlight the selected inner boundary (if any)
+        if (value > 0)
+        {
+            _visualizationControl?.SetSelectedInnerBoundary(value - 1);
+        }
+        else
+        {
+            _visualizationControl?.SetSelectedInnerBoundary(-1);
+        }
+
+        // Update CanStartBoundaryModify
+        UpdateCanStartBoundaryModify();
+
+        OnPropertyChanged(nameof(IsInnerBoundarySelected));
+        OnPropertyChanged(nameof(SelectedBoundaryName));
     }
 
     [ObservableProperty]
-    private bool _isInnerNotchOperation = true;
+    private bool _isNotchOperation = true;
+
+    partial void OnIsNotchOperationChanged(bool value)
+    {
+        if (value)
+        {
+            IsBulgeOperation = false;
+        }
+        OnPropertyChanged(nameof(CurrentOperationName));
+    }
 
     [ObservableProperty]
-    private bool _isInnerBulgeOperation = false;
+    private bool _isBulgeOperation = false;
+
+    partial void OnIsBulgeOperationChanged(bool value)
+    {
+        if (value)
+        {
+            IsNotchOperation = false;
+        }
+        OnPropertyChanged(nameof(CurrentOperationName));
+    }
 
     [ObservableProperty]
-    private bool _canStartInnerModify = false;
+    private bool _canStartBoundaryModify = false;
 
-    private int _targetInnerBoundaryIndex = -1;
-    private string _innerModifyOperation = ""; // "notch" or "bulge"
+    private int _targetBoundaryIndex = -1; // 0 = outer, 1+ = inner (index - 1)
+    private string _modifyOperation = ""; // "notch" or "bulge"
 
-    public ObservableCollection<string> InnerBoundaryChoices { get; } = new ObservableCollection<string>();
+    [ObservableProperty]
+    private string _validationMessage = string.Empty;
+
+    public ObservableCollection<string> BoundaryChoices { get; } = new ObservableCollection<string>();
+
+    // Computed property for whether an inner boundary is selected
+    public bool IsInnerBoundarySelected => SelectedBoundaryIndex > 0;
+
+    // Computed property for the selected boundary name (for display in apply dialog)
+    public string SelectedBoundaryName
+    {
+        get
+        {
+            if (_currentField?.Boundary == null) return "No boundary";
+            if (SelectedBoundaryIndex == 0) return "Outer Boundary";
+            if (SelectedBoundaryIndex > 0 && SelectedBoundaryIndex <= (_currentField.Boundary.InnerBoundaries?.Count ?? 0))
+            {
+                int innerIndex = SelectedBoundaryIndex - 1;
+                var innerBoundary = _currentField.Boundary.InnerBoundaries[innerIndex];
+                return $"Inner Boundary {innerIndex + 1} ({innerBoundary.Points.Count} pts, {innerBoundary.AreaHectares:F2} ha)";
+            }
+            return "Unknown";
+        }
+    }
+
+    // Computed property for the current operation name (for display in apply dialog)
+    public string CurrentOperationName => IsNotchOperation ? "Notch" : "Bulge";
     // NTRIP properties
     [ObservableProperty]
     private bool _isNtripConnected = false;
@@ -328,62 +386,71 @@ public partial class MainWindowViewModel : ViewModelBase
     [RelayCommand]
     private void OpenBoundaryNotchDialog()
     {
-        var mainWindow = GetMainWindow();
-        if (mainWindow == null) return;
-
-        // Set up for notch recording mode
-        _pointRecordingMode = "notch";
-        PointRecordingTitle = "Boundary Notch";
-        PointRecordingDescription = "Drive a path that crosses the boundary at least twice to create a notch (cutout). Start and end outside the boundary.";
-        IsRecordingContinuously = false;
-        UpdateContinuousRecordingButtonText();
-
-        var dialog = new Views.Dialogs.PointRecordingDialog
-        {
-            DataContext = this
-        };
-        ShowDialogOnLeft(dialog, mainWindow);
+        // Legacy command - redirect to unified dialog with outer boundary notch
+        SelectedBoundaryIndex = 0; // Outer boundary
+        IsNotchOperation = true;
+        IsBulgeOperation = false;
+        OpenBoundaryModifyDialog();
     }
 
     [RelayCommand]
     private void OpenInnerBoundaryModifyDialog()
     {
-        var mainWindow = GetMainWindow();
-        if (mainWindow == null) return;
-
+        // Legacy command - redirect to unified dialog with inner boundary selected
         if (_currentField?.Boundary?.InnerBoundaries == null || _currentField.Boundary.InnerBoundaries.Count == 0)
         {
             StatusText = "No inner boundaries to modify";
             return;
         }
 
-        // Populate inner boundary choices
-        InnerBoundaryChoices.Clear();
-        for (int i = 0; i < _currentField.Boundary.InnerBoundaries.Count; i++)
+        // Default to first inner boundary
+        SelectedBoundaryIndex = 1; // First inner boundary
+        IsNotchOperation = true;
+        IsBulgeOperation = false;
+        OpenBoundaryModifyDialog();
+    }
+
+    [RelayCommand]
+    private void OpenBoundaryModifyDialog()
+    {
+        var mainWindow = GetMainWindow();
+        if (mainWindow == null) return;
+
+        if (_currentField?.Boundary?.OuterBoundary == null)
         {
-            var ib = _currentField.Boundary.InnerBoundaries[i];
-            InnerBoundaryChoices.Add($"Inner Boundary {i + 1} ({ib.Points.Count} points, {ib.AreaHectares:F2} ha)");
+            StatusText = "No boundary available to modify";
+            return;
         }
 
-        // Enable inner boundary selection mode in visualization
+        // Populate boundary choices
+        BoundaryChoices.Clear();
+        BoundaryChoices.Add("Outer Boundary");
+
+        if (_currentField.Boundary.InnerBoundaries != null)
+        {
+            for (int i = 0; i < _currentField.Boundary.InnerBoundaries.Count; i++)
+            {
+                var ib = _currentField.Boundary.InnerBoundaries[i];
+                BoundaryChoices.Add($"Inner Boundary {i + 1} ({ib.Points.Count} points, {ib.AreaHectares:F2} ha)");
+            }
+        }
+
+        // Enable boundary selection mode in visualization
         _visualizationControl?.EnableInnerBoundarySelectionMode();
 
-        // Get currently selected inner boundary from visualization (if any)
-        int visualizationSelection = _visualizationControl?.GetSelectedInnerBoundary() ?? -1;
-        SelectedInnerBoundaryIndex = visualizationSelection >= 0 ? visualizationSelection : 0;
+        // Set the currently selected boundary in the visualization
+        // SelectedBoundaryIndex: 0 = outer, 1+ = inner
+        // Visualization expects: -1 = outer, 0+ = inner
+        int visualizationIndex = SelectedBoundaryIndex - 1;
+        _visualizationControl?.SetSelectedInnerBoundary(visualizationIndex);
 
-        // Highlight the selected boundary in visualization
-        _visualizationControl?.SetSelectedInnerBoundary(SelectedInnerBoundaryIndex);
+        // Update UI state
+        UpdateCanStartBoundaryModify();
 
-        IsInnerNotchOperation = true;
-        IsInnerBulgeOperation = false;
-        CanStartInnerModify = true;
-
-        var dialog = new Views.Dialogs.InnerBoundaryModifyDialog
+        var dialog = new Views.Dialogs.BoundaryModifyDialog
         {
             DataContext = this
         };
-        ShowDialogOnLeft(dialog, mainWindow);
 
         // When dialog closes, disable selection mode
         dialog.Closed += (s, e) =>
@@ -391,8 +458,45 @@ public partial class MainWindowViewModel : ViewModelBase
             _visualizationControl?.DisableInnerBoundarySelectionMode();
         };
 
-        dialog.Show(mainWindow);
-        StatusText = "Click on an inner boundary in the visualization to select it";
+        ShowDialogOnLeft(dialog, mainWindow);
+        StatusText = SelectedBoundaryIndex == 0 ? "Modifying outer boundary" : "Click on a boundary in the visualization to select it";
+    }
+
+    private void UpdateCanStartBoundaryModify()
+    {
+        // Can start if we have a field with a boundary AND a valid boundary is selected
+        if (_currentField?.Boundary?.OuterBoundary == null)
+        {
+            CanStartBoundaryModify = false;
+            return;
+        }
+
+        // Check if selected boundary index is valid
+        if (SelectedBoundaryIndex == 0)
+        {
+            // Outer boundary is always available if we have a boundary
+            CanStartBoundaryModify = true;
+        }
+        else if (SelectedBoundaryIndex > 0)
+        {
+            // Check if the selected inner boundary index is valid
+            int innerIndex = SelectedBoundaryIndex - 1;
+            CanStartBoundaryModify = _currentField.Boundary.InnerBoundaries != null &&
+                                     innerIndex < _currentField.Boundary.InnerBoundaries.Count;
+        }
+        else
+        {
+            // No valid boundary selected
+            CanStartBoundaryModify = false;
+        }
+    }
+
+    [RelayCommand]
+    private void CancelBoundaryModify()
+    {
+        // Just disable selection mode - dialog will close itself
+        _visualizationControl?.DisableInnerBoundarySelectionMode();
+        StatusText = "Boundary modification cancelled";
     }
 
     [RelayCommand]
@@ -404,16 +508,17 @@ public partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
-        if (SelectedInnerBoundaryIndex < 0 || SelectedInnerBoundaryIndex >= _currentField.Boundary.InnerBoundaries.Count)
+        if (SelectedBoundaryIndex <= 0 || SelectedBoundaryIndex > _currentField.Boundary.InnerBoundaries.Count)
         {
-            StatusText = "Invalid inner boundary selection";
+            StatusText = "Please select an inner boundary to trim";
             return;
         }
 
-        var innerBoundary = _currentField.Boundary.InnerBoundaries[SelectedInnerBoundaryIndex];
+        int innerIndex = SelectedBoundaryIndex - 1;
+        var innerBoundary = _currentField.Boundary.InnerBoundaries[innerIndex];
         var outerBoundary = _currentField.Boundary.OuterBoundary.Points;
 
-        Console.WriteLine($"[VIEWMODEL] Trimming inner boundary {SelectedInnerBoundaryIndex} with {innerBoundary.Points.Count} points");
+        Console.WriteLine($"[VIEWMODEL] Trimming inner boundary {innerIndex} with {innerBoundary.Points.Count} points");
 
         // Find all points that are inside the outer boundary
         var trimmedPoints = TrimPolygonToOuterBoundary(innerBoundary.Points, outerBoundary);
@@ -528,12 +633,19 @@ public partial class MainWindowViewModel : ViewModelBase
     [RelayCommand]
     private void StartInnerBoundaryRecording()
     {
+        // Legacy command - redirect to unified command
+        StartBoundaryRecording();
+    }
+
+    [RelayCommand]
+    private void StartBoundaryRecording()
+    {
         var mainWindow = GetMainWindow();
         if (mainWindow == null) return;
 
-        if (_currentField == null || _currentField.Boundary?.InnerBoundaries == null)
+        if (_currentField == null)
         {
-            StatusText = "No field or inner boundaries loaded";
+            StatusText = "No field loaded";
             return;
         }
 
@@ -543,27 +655,76 @@ public partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
-        // Save the selected inner boundary and operation
-        _targetInnerBoundaryIndex = SelectedInnerBoundaryIndex;
-        _innerModifyOperation = IsInnerNotchOperation ? "notch" : "bulge";
+        // Validate that a boundary is selected
+        if (!CanStartBoundaryModify)
+        {
+            StatusText = "Please select a valid boundary to modify";
+            return;
+        }
 
-        // Clear previous notch points
+        // Validate the selected boundary index
+        if (SelectedBoundaryIndex == 0)
+        {
+            // Outer boundary - always valid if we got here
+        }
+        else if (SelectedBoundaryIndex > 0)
+        {
+            // Inner boundary - check if valid
+            int innerIndex = SelectedBoundaryIndex - 1;
+            if (_currentField.Boundary?.InnerBoundaries == null ||
+                innerIndex >= _currentField.Boundary.InnerBoundaries.Count)
+            {
+                StatusText = "Selected inner boundary is not valid";
+                return;
+            }
+        }
+        else
+        {
+            StatusText = "Please select a boundary to modify";
+            return;
+        }
+
+        // Save the selected boundary and operation
+        _targetBoundaryIndex = SelectedBoundaryIndex;
+        _modifyOperation = IsNotchOperation ? "notch" : "bulge";
+
+        // Clear previous modification points
         NotchPoints.Clear();
         NotchPointCount = 0;
         CanApplyNotch = false;
         IsRecordingNotch = false;
 
-        // Set up for inner boundary modification mode
-        _pointRecordingMode = "inner";
-        PointRecordingTitle = $"Inner Boundary {(_innerModifyOperation == "notch" ? "Notch" : "Bulge")}";
-        PointRecordingDescription = _innerModifyOperation == "notch"
-            ? "Drive a path that crosses the inner boundary at least twice to create a notch (makes hole smaller - adds farmable area)."
-            : "Drive a path that crosses the inner boundary at least twice to create a bulge (makes hole bigger - reduces farmable area).";
+        // Set up recording mode based on selected boundary
+        if (_targetBoundaryIndex == 0)
+        {
+            // Outer boundary
+            _pointRecordingMode = "boundary_modify";
+            PointRecordingTitle = $"Outer Boundary {(_modifyOperation == "notch" ? "Notch" : "Bulge")}";
+            if (_modifyOperation == "notch")
+            {
+                PointRecordingDescription = "Drive a path that crosses the outer boundary at least twice to create a notch (reduces area). Start and end outside the boundary.";
+            }
+            else
+            {
+                PointRecordingDescription = "Drive a path that crosses the outer boundary at least twice to expand it outward (increases area). Start and end inside the boundary.";
+            }
+        }
+        else
+        {
+            // Inner boundary
+            _pointRecordingMode = "inner";
+            int innerIndex = _targetBoundaryIndex - 1;
+            PointRecordingTitle = $"Inner Boundary {innerIndex + 1} {(_modifyOperation == "notch" ? "Notch" : "Bulge")}";
+            PointRecordingDescription = _modifyOperation == "notch"
+                ? "Drive a path that crosses the inner boundary at least twice to create a notch (makes hole smaller - adds farmable area)."
+                : "Drive a path that crosses the inner boundary at least twice to create a bulge (makes hole bigger - reduces farmable area).";
+        }
+
         IsRecordingContinuously = false;
         UpdateContinuousRecordingButtonText();
 
-        StatusText = $"Recording inner boundary {_innerModifyOperation} points...";
-        Console.WriteLine($"[VIEWMODEL] Started recording inner boundary {_innerModifyOperation} for boundary #{_targetInnerBoundaryIndex}");
+        StatusText = $"Recording {SelectedBoundaryName} {_modifyOperation} points...";
+        Console.WriteLine($"[VIEWMODEL] Started recording {SelectedBoundaryName} {_modifyOperation} (TargetBoundaryIndex={_targetBoundaryIndex})");
 
         var dialog = new Views.Dialogs.PointRecordingDialog
         {
@@ -851,7 +1012,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
             StatusText = $"Point added - Total: {PointCount}";
         }
-        else if (_pointRecordingMode == "notch" || _pointRecordingMode == "inner")
+        else if (_pointRecordingMode == "notch" || _pointRecordingMode == "inner" || _pointRecordingMode == "boundary_modify")
         {
             // Auto-start recording if not already started
             if (!IsRecordingNotch)
@@ -870,7 +1031,9 @@ public partial class MainWindowViewModel : ViewModelBase
             NotchPointCount = NotchPoints.Count;
             _visualizationControl?.SetNotchPoints(NotchPoints);
 
-            string modeName = _pointRecordingMode == "inner" ? "Inner modification" : "Notch";
+            string modeName = _pointRecordingMode == "inner" ? "Inner modification"
+                : _pointRecordingMode == "boundary_modify" ? "Outer boundary modification"
+                : "Notch";
             StatusText = $"{modeName} point added - Total: {NotchPointCount}";
             Console.WriteLine($"[VIEWMODEL] Manually added {modeName} point #{NotchPointCount}: E={e:F2}m, N={n:F2}m");
         }
@@ -883,14 +1046,16 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             RemoveLastPoint();
         }
-        else if (_pointRecordingMode == "notch" || _pointRecordingMode == "inner")
+        else if (_pointRecordingMode == "notch" || _pointRecordingMode == "inner" || _pointRecordingMode == "boundary_modify")
         {
             if (NotchPoints.Count > 0)
             {
                 NotchPoints.RemoveAt(NotchPoints.Count - 1);
                 NotchPointCount = NotchPoints.Count;
                 _visualizationControl?.SetNotchPoints(NotchPoints);
-                string modeName = _pointRecordingMode == "inner" ? "inner modification" : "notch";
+                string modeName = _pointRecordingMode == "inner" ? "inner modification"
+                    : _pointRecordingMode == "boundary_modify" ? "outer boundary modification"
+                    : "notch";
                 Console.WriteLine($"[VIEWMODEL] Deleted last {modeName} point. Remaining: {NotchPointCount}");
             }
         }
@@ -915,7 +1080,7 @@ public partial class MainWindowViewModel : ViewModelBase
                 StatusText = "Continuous recording paused - use Add Point for manual points";
             }
         }
-        else if (_pointRecordingMode == "notch" || _pointRecordingMode == "inner")
+        else if (_pointRecordingMode == "notch" || _pointRecordingMode == "inner" || _pointRecordingMode == "boundary_modify")
         {
             IsRecordingNotch = IsRecordingContinuously;
             if (IsRecordingContinuously)
@@ -939,40 +1104,19 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             StopRecording();
         }
-        else if (_pointRecordingMode == "notch")
+        else if (_pointRecordingMode == "notch" || _pointRecordingMode == "boundary_modify" || _pointRecordingMode == "inner")
         {
-            StopRecordingNotch();
+            // All boundary modification modes use unified validation and dialog
+            StopRecordingBoundaryModify();
 
-            // Always open the notch dialog (validation status is shown in the dialog)
-            Console.WriteLine($"[VIEWMODEL] FinishPointRecording for notch mode. NotchPoints={NotchPointCount}, CanApplyNotch={CanApplyNotch}");
+            // Always open the boundary apply dialog (validation status is shown in the dialog)
+            Console.WriteLine($"[VIEWMODEL] FinishPointRecording for {_pointRecordingMode} mode. NotchPoints={NotchPointCount}, CanApplyNotch={CanApplyNotch}");
 
             var mainWindow = GetMainWindow();
             if (mainWindow != null)
             {
-                Console.WriteLine($"[VIEWMODEL] Opening BoundaryNotchDialog");
-                var dialog = new Views.Dialogs.BoundaryNotchDialog
-                {
-                    DataContext = this
-                };
-                ShowDialogOnLeft(dialog, mainWindow);
-            }
-            else
-            {
-                Console.WriteLine($"[VIEWMODEL] ERROR: mainWindow is null!");
-            }
-        }
-        else if (_pointRecordingMode == "inner")
-        {
-            StopRecordingInnerModify();
-
-            // Open inner boundary apply dialog
-            Console.WriteLine($"[VIEWMODEL] FinishPointRecording for inner mode. NotchPoints={NotchPointCount}, CanApplyNotch={CanApplyNotch}");
-
-            var mainWindow = GetMainWindow();
-            if (mainWindow != null)
-            {
-                Console.WriteLine($"[VIEWMODEL] Opening InnerBoundaryApplyDialog");
-                var dialog = new Views.Dialogs.InnerBoundaryApplyDialog
+                Console.WriteLine($"[VIEWMODEL] Opening BoundaryApplyDialog");
+                var dialog = new Views.Dialogs.BoundaryApplyDialog
                 {
                     DataContext = this
                 };
@@ -1308,8 +1452,12 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private void OnInnerBoundarySelected(object? sender, int boundaryIndex)
     {
-        SelectedInnerBoundaryIndex = boundaryIndex;
-        Console.WriteLine($"[VIEWMODEL] Inner boundary {boundaryIndex} selected from visualization");
+        // boundaryIndex: -1 = outer, 0+ = inner boundary index
+        // SelectedBoundaryIndex: 0 = outer, 1+ = inner
+        SelectedBoundaryIndex = boundaryIndex + 1;
+
+        string boundaryName = boundaryIndex == -1 ? "Outer" : $"Inner {boundaryIndex}";
+        Console.WriteLine($"[VIEWMODEL] {boundaryName} boundary selected from visualization (SelectedBoundaryIndex={SelectedBoundaryIndex})");
     }
 
     private void OnVehicleSnapRequested(object? sender, (double easting, double northing) localCoords)
@@ -1508,10 +1656,12 @@ public partial class MainWindowViewModel : ViewModelBase
                 _recordingService.RecordPosition(position);
             }
 
-            // Record notch/inner modification points if recording is active
+            // Record notch/inner/outer modification points if recording is active
             if (IsRecordingNotch && _currentField != null)
             {
-                string modeName = _pointRecordingMode == "inner" ? "Inner modification" : "Notch";
+                string modeName = _pointRecordingMode == "inner" ? "Inner modification"
+                    : _pointRecordingMode == "boundary_modify" ? "Outer boundary modification"
+                    : "Notch";
 
                 // Check if we should record this point (1m minimum distance)
                 if (NotchPoints.Count == 0)
@@ -1809,240 +1959,137 @@ public partial class MainWindowViewModel : ViewModelBase
     [RelayCommand]
     private void StopRecordingNotch()
     {
-        // Always validate, even if continuous recording was already stopped
+        // Legacy method - redirect to unified method
+        StopRecordingBoundaryModify();
+    }
+
+    private void StopRecordingBoundaryModify()
+    {
         IsRecordingNotch = false;
-
-        // Check if we have enough points and if they cross the boundary twice
-        if (NotchPoints.Count < 2)
-        {
-            StatusText = "Not enough notch points (minimum 2 required)";
-            CanApplyNotch = false;
-            return;
-        }
-
-        // Check if notch path crosses boundary
-        var crossings = FindBoundaryCrossings(NotchPoints.ToList());
-
-        if (crossings.Count < 2)
-        {
-            StatusText = "Notch must cross boundary at least twice";
-            CanApplyNotch = false;
-            Console.WriteLine("[VIEWMODEL] Notch recording stopped but not enough crossings");
-            return;
-        }
-
-        // Check if we have an even number of crossings (pairs of in/out)
-        if (crossings.Count % 2 != 0)
-        {
-            StatusText = $"Invalid notch: Found {crossings.Count} crossings (must be even number)";
-            CanApplyNotch = false;
-            Console.WriteLine($"[VIEWMODEL] Notch invalid: odd number of crossings ({crossings.Count})");
-            return;
-        }
-
-        // Check if both ends of the notch are outside the boundary
-        var firstPoint = NotchPoints[0];
-        var lastPoint = NotchPoints[NotchPoints.Count - 1];
-
-        bool firstInside = IsPointInsideBoundary(firstPoint);
-        bool lastInside = IsPointInsideBoundary(lastPoint);
-        bool firstOutside = !firstInside;
-        bool lastOutside = !lastInside;
-
-        Console.WriteLine($"[VIEWMODEL] First point E={firstPoint.Easting:F2}, N={firstPoint.Northing:F2}, inside={firstInside}");
-        Console.WriteLine($"[VIEWMODEL] Last point E={lastPoint.Easting:F2}, N={lastPoint.Northing:F2}, inside={lastInside}");
-        Console.WriteLine($"[VIEWMODEL] Boundary has {_currentField?.Boundary?.OuterBoundary?.Points.Count ?? 0} points");
-
-        if (!firstOutside || !lastOutside)
-        {
-            StatusText = "Invalid notch: Both start and end points must be outside the boundary";
-            CanApplyNotch = false;
-            Console.WriteLine($"[VIEWMODEL] Notch invalid: start outside={firstOutside}, end outside={lastOutside}");
-            return;
-        }
-
-        int numNotches = crossings.Count / 2;
-        CanApplyNotch = true;
-        StatusText = $"Notch recorded: {NotchPoints.Count} points, {crossings.Count} crossings, {numNotches} notch(es)";
-        Console.WriteLine($"[VIEWMODEL] Notch recording stopped. Found {crossings.Count} crossings ({numNotches} notches), both ends outside boundary");
-    }
-
-    [RelayCommand]
-    private void ApplyNotch()
-    {
-        if (!CanApplyNotch || _currentField?.Boundary?.OuterBoundary == null)
-        {
-            return;
-        }
-
-        try
-        {
-            var allCrossings = FindBoundaryCrossingsWithNotchIndex(NotchPoints.ToList());
-            if (allCrossings.Count < 2 || allCrossings.Count % 2 != 0)
-            {
-                StatusText = "Cannot apply notch - must have even number of crossings";
-                return;
-            }
-
-            int numNotches = allCrossings.Count / 2;
-            Console.WriteLine($"[VIEWMODEL] Applying {numNotches} notch(es) from {allCrossings.Count} crossings");
-
-            // Group crossings into pairs (crossing 0-1 = notch 1, crossing 2-3 = notch 2, etc.)
-            var notchPairs = new List<(BoundaryCrossingWithNotchIndex first, BoundaryCrossingWithNotchIndex second)>();
-            for (int i = 0; i < allCrossings.Count; i += 2)
-            {
-                notchPairs.Add((allCrossings[i], allCrossings[i + 1]));
-                Console.WriteLine($"[VIEWMODEL] Notch pair {i/2 + 1}: crossings {i} and {i+1}");
-            }
-
-            // Sort pairs by boundary segment index so we can process them in order
-            var sortedPairs = notchPairs
-                .Select((pair, index) => new {
-                    PairIndex = index,
-                    FirstBoundaryIdx = Math.Min(pair.first.BoundarySegmentIndex, pair.second.BoundarySegmentIndex),
-                    SecondBoundaryIdx = Math.Max(pair.first.BoundarySegmentIndex, pair.second.BoundarySegmentIndex),
-                    FirstCrossing = pair.first.BoundarySegmentIndex <= pair.second.BoundarySegmentIndex ? pair.first : pair.second,
-                    SecondCrossing = pair.first.BoundarySegmentIndex <= pair.second.BoundarySegmentIndex ? pair.second : pair.first,
-                    ChronologicalFirst = pair.first,
-                    ChronologicalSecond = pair.second
-                })
-                .OrderBy(p => p.FirstBoundaryIdx)
-                .ToList();
-
-            // Build new boundary by walking through old boundary and inserting notches
-            var oldBoundary = _currentField.Boundary.OuterBoundary.Points;
-            var newBoundary = new List<BoundaryPoint>();
-            int currentBoundaryIdx = 0;
-            int currentPairIdx = 0;
-
-            while (currentBoundaryIdx < oldBoundary.Count)
-            {
-                // Check if we're at a notch insertion point
-                if (currentPairIdx < sortedPairs.Count &&
-                    currentBoundaryIdx == sortedPairs[currentPairIdx].FirstBoundaryIdx)
-                {
-                    var pair = sortedPairs[currentPairIdx];
-                    Console.WriteLine($"[VIEWMODEL] Processing notch {currentPairIdx + 1} at boundary index {currentBoundaryIdx}");
-
-                    // Add boundary points up to this crossing
-                    newBoundary.Add(oldBoundary[currentBoundaryIdx]);
-
-                    // Add first intersection point
-                    newBoundary.Add(pair.FirstCrossing.CrossingPoint);
-
-                    // Add notch points between the two crossings
-                    int startNotchIdx = Math.Min(pair.ChronologicalFirst.NotchSegmentIndex, pair.ChronologicalSecond.NotchSegmentIndex);
-                    int endNotchIdx = Math.Max(pair.ChronologicalFirst.NotchSegmentIndex, pair.ChronologicalSecond.NotchSegmentIndex);
-
-                    var notchPointsToAdd = new List<BoundaryPoint>();
-                    for (int i = startNotchIdx + 1; i <= endNotchIdx; i++)
-                    {
-                        if (i < NotchPoints.Count)
-                        {
-                            notchPointsToAdd.Add(NotchPoints[i]);
-                        }
-                    }
-
-                    // Reverse if needed to match boundary direction
-                    if (pair.FirstCrossing.NotchSegmentIndex > pair.SecondCrossing.NotchSegmentIndex)
-                    {
-                        notchPointsToAdd.Reverse();
-                    }
-
-                    newBoundary.AddRange(notchPointsToAdd);
-
-                    // Add second intersection point
-                    newBoundary.Add(pair.SecondCrossing.CrossingPoint);
-
-                    // Skip boundary points between the two crossings
-                    currentBoundaryIdx = pair.SecondBoundaryIdx + 1;
-                    currentPairIdx++;
-                }
-                else
-                {
-                    // Regular boundary point, just add it
-                    newBoundary.Add(oldBoundary[currentBoundaryIdx]);
-                    currentBoundaryIdx++;
-                }
-            }
-
-            // Replace boundary with new one
-            _currentField.Boundary.OuterBoundary.Points = newBoundary;
-
-            // Update boundary visualization
-            BoundaryPoints.Clear();
-            foreach (var pt in newBoundary)
-            {
-                BoundaryPoints.Add(pt);
-            }
-            _visualizationControl?.SetBoundaryPoints(BoundaryPoints);
-
-            // Save modified boundary
-            BoundaryFileService.SaveBoundary(_currentField.Boundary, _currentField.DirectoryPath);
-
-            StatusText = $"{numNotches} notch(es) applied to boundary";
-            Console.WriteLine($"[VIEWMODEL] {numNotches} notch(es) applied successfully. New boundary: {newBoundary.Count} points");
-
-            // Clear notch data
-            NotchPoints.Clear();
-            NotchPointCount = 0;
-            CanApplyNotch = false;
-
-            // Clear notch visualization
-            _visualizationControl?.SetNotchPoints(NotchPoints);
-        }
-        catch (Exception ex)
-        {
-            StatusText = $"Error applying notch: {ex.Message}";
-            Console.WriteLine($"[VIEWMODEL] Error applying notch: {ex.Message}");
-            Console.WriteLine($"[VIEWMODEL] Stack trace: {ex.StackTrace}");
-        }
-    }
-
-    [RelayCommand]
-    private void CancelNotch()
-    {
-        NotchPoints.Clear();
-        NotchPointCount = 0;
-        CanApplyNotch = false;
-        IsRecordingNotch = false;
-        StatusText = "Notch cancelled";
-        Console.WriteLine("[VIEWMODEL] Notch cancelled");
-
-        // Update visualization to clear notch points
-        _visualizationControl?.SetNotchPoints(NotchPoints);
-    }
-
-    // Inner boundary modification methods
-    private void StopRecordingInnerModify()
-    {
-        IsRecordingNotch = false; // Reusing the same flag
 
         // Check if we have enough points
         if (NotchPoints.Count < 2)
         {
             StatusText = "Not enough points (minimum 2 required)";
             CanApplyNotch = false;
+            ValidationMessage = "Need at least 2 points to create a modification path.";
             return;
         }
 
-        if (_targetInnerBoundaryIndex < 0 ||
-            _currentField?.Boundary?.InnerBoundaries == null ||
-            _targetInnerBoundaryIndex >= _currentField.Boundary.InnerBoundaries.Count)
+        // Validate based on target boundary type
+        if (_targetBoundaryIndex == 0)
+        {
+            // Outer boundary validation
+            ValidateOuterBoundaryModification();
+        }
+        else
+        {
+            // Inner boundary validation
+            ValidateInnerBoundaryModification();
+        }
+    }
+
+    private void ValidateOuterBoundaryModification()
+    {
+        if (_currentField?.Boundary?.OuterBoundary == null)
+        {
+            StatusText = "No outer boundary available";
+            CanApplyNotch = false;
+            ValidationMessage = "No outer boundary is loaded.";
+            return;
+        }
+
+        // Check if path crosses boundary
+        var crossings = FindBoundaryCrossings(NotchPoints.ToList());
+
+        if (crossings.Count < 2)
+        {
+            StatusText = "Path must cross boundary at least twice";
+            CanApplyNotch = false;
+            ValidationMessage = "The modification path must cross the outer boundary at least twice.";
+            Console.WriteLine("[VIEWMODEL] Outer boundary modify: not enough crossings");
+            return;
+        }
+
+        // Check for even number of crossings
+        if (crossings.Count % 2 != 0)
+        {
+            StatusText = $"Invalid path: Found {crossings.Count} crossings (must be even number)";
+            CanApplyNotch = false;
+            ValidationMessage = $"Found {crossings.Count} crossings, but need an even number.";
+            Console.WriteLine($"[VIEWMODEL] Outer boundary modify: odd number of crossings ({crossings.Count})");
+            return;
+        }
+
+        // Check start/end position based on operation type
+        var firstPoint = NotchPoints[0];
+        var lastPoint = NotchPoints[NotchPoints.Count - 1];
+
+        bool firstInside = IsPointInsideBoundary(firstPoint);
+        bool lastInside = IsPointInsideBoundary(lastPoint);
+
+        Console.WriteLine($"[VIEWMODEL] First point E={firstPoint.Easting:F2}, N={firstPoint.Northing:F2}, inside={firstInside}");
+        Console.WriteLine($"[VIEWMODEL] Last point E={lastPoint.Easting:F2}, N={lastPoint.Northing:F2}, inside={lastInside}");
+
+        if (_modifyOperation == "notch")
+        {
+            // Notch: start and end must be OUTSIDE
+            if (firstInside || lastInside)
+            {
+                StatusText = "Invalid notch: Both start and end points must be outside the boundary";
+                CanApplyNotch = false;
+                ValidationMessage = "For a notch, both the start and end points must be outside the outer boundary.";
+                Console.WriteLine($"[VIEWMODEL] Notch invalid: start inside={firstInside}, end inside={lastInside}");
+                return;
+            }
+        }
+        else // bulge
+        {
+            // Bulge: start and end must be INSIDE
+            if (!firstInside || !lastInside)
+            {
+                StatusText = "Invalid bulge: Both start and end points must be inside the boundary";
+                CanApplyNotch = false;
+                ValidationMessage = "For a bulge, both the start and end points must be inside the outer boundary.";
+                Console.WriteLine($"[VIEWMODEL] Bulge invalid: start inside={firstInside}, end inside={lastInside}");
+                return;
+            }
+        }
+
+        int numModifications = crossings.Count / 2;
+        CanApplyNotch = true;
+        ValidationMessage = string.Empty;
+        StatusText = $"{_modifyOperation} recorded: {NotchPoints.Count} points, {crossings.Count} crossings, {numModifications} modification(s)";
+        Console.WriteLine($"[VIEWMODEL] Outer {_modifyOperation} recording stopped. Found {crossings.Count} crossings ({numModifications} modifications)");
+    }
+
+    private void ValidateInnerBoundaryModification()
+    {
+        if (_currentField?.Boundary?.InnerBoundaries == null)
+        {
+            StatusText = "No inner boundaries available";
+            CanApplyNotch = false;
+            ValidationMessage = "No inner boundaries are loaded.";
+            return;
+        }
+
+        int innerIndex = _targetBoundaryIndex - 1;
+        if (innerIndex < 0 || innerIndex >= _currentField.Boundary.InnerBoundaries.Count)
         {
             StatusText = "Invalid inner boundary selection";
             CanApplyNotch = false;
+            ValidationMessage = "The selected inner boundary is invalid.";
             return;
         }
 
-        // Check if path crosses the target inner boundary
-        var targetInnerBoundary = _currentField.Boundary.InnerBoundaries[_targetInnerBoundaryIndex];
+        var targetInnerBoundary = _currentField.Boundary.InnerBoundaries[innerIndex];
         var crossings = FindInnerBoundaryCrossings(NotchPoints.ToList(), targetInnerBoundary.Points);
 
         if (crossings.Count < 2)
         {
             StatusText = "Path must cross the inner boundary at least twice";
             CanApplyNotch = false;
+            ValidationMessage = "The modification path must cross the inner boundary at least twice.";
             Console.WriteLine("[VIEWMODEL] Inner modify: not enough crossings");
             return;
         }
@@ -2052,77 +2099,265 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             StatusText = $"Invalid path: Found {crossings.Count} crossings (must be even number)";
             CanApplyNotch = false;
+            ValidationMessage = $"Found {crossings.Count} crossings, but need an even number.";
             Console.WriteLine($"[VIEWMODEL] Inner modify: odd number of crossings ({crossings.Count})");
             return;
         }
 
         int numModifications = crossings.Count / 2;
-        string operationName = _innerModifyOperation == "notch" ? "Notch" : "Bulge";
         CanApplyNotch = true;
-        StatusText = $"{operationName} recorded: {NotchPoints.Count} points, {crossings.Count} crossings, {numModifications} modification(s)";
-        Console.WriteLine($"[VIEWMODEL] Inner {operationName} recording stopped. Found {crossings.Count} crossings ({numModifications} modifications)");
+        ValidationMessage = string.Empty;
+        StatusText = $"{_modifyOperation} recorded: {NotchPoints.Count} points, {crossings.Count} crossings, {numModifications} modification(s)";
+        Console.WriteLine($"[VIEWMODEL] Inner {_modifyOperation} recording stopped. Found {crossings.Count} crossings ({numModifications} modifications)");
+    }
+
+    [RelayCommand]
+    private void ApplyNotch()
+    {
+        // Legacy command - redirect to unified command
+        ApplyBoundaryModification();
     }
 
     [RelayCommand]
     private void ApplyInnerModification()
     {
-        if (!CanApplyNotch || _currentField?.Boundary?.InnerBoundaries == null ||
-            _targetInnerBoundaryIndex < 0 || _targetInnerBoundaryIndex >= _currentField.Boundary.InnerBoundaries.Count)
+        // Legacy command - redirect to unified command
+        ApplyBoundaryModification();
+    }
+
+    [RelayCommand]
+    private void ApplyBoundaryModification()
+    {
+        if (!CanApplyNotch)
         {
+            StatusText = "Cannot apply modification - validation failed";
             return;
         }
 
         try
         {
-            var targetInnerBoundary = _currentField.Boundary.InnerBoundaries[_targetInnerBoundaryIndex];
-            var allCrossings = FindInnerBoundaryCrossingsWithNotchIndex(NotchPoints.ToList(), targetInnerBoundary.Points);
-
-            if (allCrossings.Count < 2 || allCrossings.Count % 2 != 0)
+            if (_targetBoundaryIndex == 0)
             {
-                StatusText = "Cannot apply modification - must have even number of crossings";
-                return;
+                // Apply to outer boundary
+                ApplyOuterBoundaryModification();
             }
-
-            int numModifications = allCrossings.Count / 2;
-            string operationName = _innerModifyOperation == "notch" ? "notch" : "bulge";
-            Console.WriteLine($"[VIEWMODEL] Applying {numModifications} inner {operationName}(es) from {allCrossings.Count} crossings");
-
-            // Apply the modification to the inner boundary
-            var modifiedBoundary = ApplyInnerBoundaryModification(
-                targetInnerBoundary.Points,
-                NotchPoints.ToList(),
-                allCrossings);
-
-            // Update the inner boundary
-            targetInnerBoundary.Points.Clear();
-            foreach (var point in modifiedBoundary)
+            else
             {
-                targetInnerBoundary.Points.Add(point);
+                // Apply to inner boundary
+                ApplyInnerBoundaryModificationUnified();
             }
-
-            // Update visualization
-            _visualizationControl?.SetInnerBoundaries(
-                _currentField.Boundary.InnerBoundaries.Select(ib => ib.Points));
-
-            // Clear notch points from visualization
-            NotchPoints.Clear();
-            NotchPointCount = 0;
-            _visualizationControl?.SetNotchPoints(NotchPoints);
-
-            // Recalculate area
-            BoundaryArea = _currentField.Boundary.AreaHectares;
-
-            // Save modified boundary
-            BoundaryFileService.SaveBoundary(_currentField.Boundary, _currentField.DirectoryPath);
-
-            StatusText = $"Inner boundary {operationName} applied successfully - Area: {BoundaryArea:F2} ha";
-            Console.WriteLine($"[VIEWMODEL] Inner boundary {operationName} applied. New inner boundary has {targetInnerBoundary.Points.Count} points");
         }
         catch (Exception ex)
         {
             StatusText = $"Error applying modification: {ex.Message}";
-            Console.WriteLine($"[VIEWMODEL] Error applying inner modification: {ex.Message}");
+            Console.WriteLine($"[VIEWMODEL] Error applying modification: {ex.Message}");
+            Console.WriteLine($"[VIEWMODEL] Stack trace: {ex.StackTrace}");
         }
+    }
+
+    private void ApplyOuterBoundaryModification()
+    {
+        if (_currentField?.Boundary?.OuterBoundary == null)
+        {
+            StatusText = "No outer boundary available";
+            return;
+        }
+
+        var allCrossings = FindBoundaryCrossingsWithNotchIndex(NotchPoints.ToList());
+        if (allCrossings.Count < 2 || allCrossings.Count % 2 != 0)
+        {
+            StatusText = "Cannot apply modification - must have even number of crossings";
+            return;
+        }
+
+        int numModifications = allCrossings.Count / 2;
+        Console.WriteLine($"[VIEWMODEL] Applying {numModifications} outer {_modifyOperation}(es) from {allCrossings.Count} crossings");
+
+        // Group crossings into pairs (crossing 0-1 = modification 1, crossing 2-3 = modification 2, etc.)
+        var modificationPairs = new List<(BoundaryCrossingWithNotchIndex first, BoundaryCrossingWithNotchIndex second)>();
+        for (int i = 0; i < allCrossings.Count; i += 2)
+        {
+            modificationPairs.Add((allCrossings[i], allCrossings[i + 1]));
+            Console.WriteLine($"[VIEWMODEL] Modification pair {i/2 + 1}: crossings {i} and {i+1}");
+        }
+
+        // Sort pairs by boundary segment index so we can process them in order
+        var sortedPairs = modificationPairs
+            .Select((pair, index) => new {
+                PairIndex = index,
+                FirstBoundaryIdx = Math.Min(pair.first.BoundarySegmentIndex, pair.second.BoundarySegmentIndex),
+                SecondBoundaryIdx = Math.Max(pair.first.BoundarySegmentIndex, pair.second.BoundarySegmentIndex),
+                FirstCrossing = pair.first.BoundarySegmentIndex <= pair.second.BoundarySegmentIndex ? pair.first : pair.second,
+                SecondCrossing = pair.first.BoundarySegmentIndex <= pair.second.BoundarySegmentIndex ? pair.second : pair.first,
+                ChronologicalFirst = pair.first,
+                ChronologicalSecond = pair.second
+            })
+            .OrderBy(p => p.FirstBoundaryIdx)
+            .ToList();
+
+        // Build new boundary by walking through old boundary and inserting modifications
+        var oldBoundary = _currentField.Boundary.OuterBoundary.Points;
+        var newBoundary = new List<BoundaryPoint>();
+        int currentBoundaryIdx = 0;
+        int currentPairIdx = 0;
+
+        while (currentBoundaryIdx < oldBoundary.Count)
+        {
+            // Check if we're at a modification insertion point
+            if (currentPairIdx < sortedPairs.Count &&
+                currentBoundaryIdx == sortedPairs[currentPairIdx].FirstBoundaryIdx)
+            {
+                var pair = sortedPairs[currentPairIdx];
+                Console.WriteLine($"[VIEWMODEL] Processing {_modifyOperation} {currentPairIdx + 1} at boundary index {currentBoundaryIdx}");
+
+                // Add boundary points up to this crossing
+                newBoundary.Add(oldBoundary[currentBoundaryIdx]);
+
+                // Add first intersection point
+                newBoundary.Add(pair.FirstCrossing.CrossingPoint);
+
+                // Add modification points between the two crossings
+                int startModifyIdx = Math.Min(pair.ChronologicalFirst.NotchSegmentIndex, pair.ChronologicalSecond.NotchSegmentIndex);
+                int endModifyIdx = Math.Max(pair.ChronologicalFirst.NotchSegmentIndex, pair.ChronologicalSecond.NotchSegmentIndex);
+
+                var modifyPointsToAdd = new List<BoundaryPoint>();
+                for (int i = startModifyIdx + 1; i <= endModifyIdx; i++)
+                {
+                    if (i < NotchPoints.Count)
+                    {
+                        modifyPointsToAdd.Add(NotchPoints[i]);
+                    }
+                }
+
+                // Reverse if needed to match boundary direction
+                // For both notch and bulge on outer boundary, use same reversal logic
+                if (pair.FirstCrossing.NotchSegmentIndex > pair.SecondCrossing.NotchSegmentIndex)
+                {
+                    modifyPointsToAdd.Reverse();
+                }
+
+                newBoundary.AddRange(modifyPointsToAdd);
+
+                // Add second intersection point
+                newBoundary.Add(pair.SecondCrossing.CrossingPoint);
+
+                // Skip boundary points between the two crossings
+                currentBoundaryIdx = pair.SecondBoundaryIdx + 1;
+                currentPairIdx++;
+            }
+            else
+            {
+                // Regular boundary point, just add it
+                newBoundary.Add(oldBoundary[currentBoundaryIdx]);
+                currentBoundaryIdx++;
+            }
+        }
+
+        // Replace boundary with new one
+        _currentField.Boundary.OuterBoundary.Points = newBoundary;
+
+        // Update boundary visualization
+        BoundaryPoints.Clear();
+        foreach (var pt in newBoundary)
+        {
+            BoundaryPoints.Add(pt);
+        }
+        _visualizationControl?.SetBoundaryPoints(BoundaryPoints);
+
+        // Save modified boundary
+        BoundaryFileService.SaveBoundary(_currentField.Boundary, _currentField.DirectoryPath);
+
+        StatusText = $"{numModifications} outer {_modifyOperation}(es) applied to boundary";
+        Console.WriteLine($"[VIEWMODEL] {numModifications} outer {_modifyOperation}(es) applied successfully. New boundary: {newBoundary.Count} points");
+
+        // Clear modification data
+        NotchPoints.Clear();
+        NotchPointCount = 0;
+        CanApplyNotch = false;
+
+        // Clear modification visualization
+        _visualizationControl?.SetNotchPoints(NotchPoints);
+    }
+
+    private void ApplyInnerBoundaryModificationUnified()
+    {
+        if (_currentField?.Boundary?.InnerBoundaries == null)
+        {
+            StatusText = "No inner boundaries available";
+            return;
+        }
+
+        int innerIndex = _targetBoundaryIndex - 1;
+        if (innerIndex < 0 || innerIndex >= _currentField.Boundary.InnerBoundaries.Count)
+        {
+            StatusText = "Invalid inner boundary selection";
+            return;
+        }
+
+        var targetInnerBoundary = _currentField.Boundary.InnerBoundaries[innerIndex];
+        var allCrossings = FindInnerBoundaryCrossingsWithNotchIndex(NotchPoints.ToList(), targetInnerBoundary.Points);
+
+        if (allCrossings.Count < 2 || allCrossings.Count % 2 != 0)
+        {
+            StatusText = "Cannot apply modification - must have even number of crossings";
+            return;
+        }
+
+        int numModifications = allCrossings.Count / 2;
+        Console.WriteLine($"[VIEWMODEL] Applying {numModifications} inner {_modifyOperation}(es) from {allCrossings.Count} crossings");
+
+        // Apply the modification to the inner boundary
+        var modifiedBoundary = ApplyInnerBoundaryModification(
+            targetInnerBoundary.Points,
+            NotchPoints.ToList(),
+            allCrossings);
+
+        // Update the inner boundary
+        targetInnerBoundary.Points.Clear();
+        foreach (var point in modifiedBoundary)
+        {
+            targetInnerBoundary.Points.Add(point);
+        }
+
+        // Update visualization
+        _visualizationControl?.SetInnerBoundaries(
+            _currentField.Boundary.InnerBoundaries.Select(ib => ib.Points));
+
+        // Clear modification points from visualization
+        NotchPoints.Clear();
+        NotchPointCount = 0;
+        _visualizationControl?.SetNotchPoints(NotchPoints);
+
+        // Recalculate area
+        BoundaryArea = _currentField.Boundary.AreaHectares;
+
+        // Save modified boundary
+        BoundaryFileService.SaveBoundary(_currentField.Boundary, _currentField.DirectoryPath);
+
+        StatusText = $"Inner boundary {_modifyOperation} applied successfully - Area: {BoundaryArea:F2} ha";
+        Console.WriteLine($"[VIEWMODEL] Inner boundary {_modifyOperation} applied. New inner boundary has {targetInnerBoundary.Points.Count} points");
+    }
+
+    [RelayCommand]
+    private void CancelNotch()
+    {
+        // Legacy command - redirect to unified command
+        CancelBoundaryModification();
+    }
+
+    [RelayCommand]
+    private void CancelBoundaryModification()
+    {
+        NotchPoints.Clear();
+        NotchPointCount = 0;
+        CanApplyNotch = false;
+        IsRecordingNotch = false;
+        ValidationMessage = string.Empty;
+        StatusText = "Boundary modification cancelled";
+        Console.WriteLine("[VIEWMODEL] Boundary modification cancelled");
+
+        // Update visualization to clear modification points
+        _visualizationControl?.SetNotchPoints(NotchPoints);
     }
 
     private class BoundaryCrossing
@@ -2287,9 +2522,9 @@ public partial class MainWindowViewModel : ViewModelBase
         List<BoundaryCrossingWithNotchIndex> allCrossings)
     {
         // For bulge operation, we reverse the modification path traversal
-        bool isBulge = _innerModifyOperation == "bulge";
+        bool isBulge = _modifyOperation == "bulge";
 
-        Console.WriteLine($"[VIEWMODEL] ApplyInnerBoundaryModification: {allCrossings.Count} crossings, operation={_innerModifyOperation}");
+        Console.WriteLine($"[VIEWMODEL] ApplyInnerBoundaryModification: {allCrossings.Count} crossings, operation={_modifyOperation}");
 
         // Group crossings into pairs (crossing 0-1 = modification 1, crossing 2-3 = modification 2, etc.)
         var modificationPairs = new List<(BoundaryCrossingWithNotchIndex first, BoundaryCrossingWithNotchIndex second)>();
@@ -2355,11 +2590,11 @@ public partial class MainWindowViewModel : ViewModelBase
                 if (shouldReverse)
                 {
                     modifyPointsToAdd.Reverse();
-                    Console.WriteLine($"[VIEWMODEL] Reversed modification points for {_innerModifyOperation} (First={pair.FirstCrossing.NotchSegmentIndex}, Second={pair.SecondCrossing.NotchSegmentIndex})");
+                    Console.WriteLine($"[VIEWMODEL] Reversed modification points for {_modifyOperation} (First={pair.FirstCrossing.NotchSegmentIndex}, Second={pair.SecondCrossing.NotchSegmentIndex})");
                 }
                 else
                 {
-                    Console.WriteLine($"[VIEWMODEL] No reverse for {_innerModifyOperation} (First={pair.FirstCrossing.NotchSegmentIndex}, Second={pair.SecondCrossing.NotchSegmentIndex})");
+                    Console.WriteLine($"[VIEWMODEL] No reverse for {_modifyOperation} (First={pair.FirstCrossing.NotchSegmentIndex}, Second={pair.SecondCrossing.NotchSegmentIndex})");
                 }
 
                 newBoundary.AddRange(modifyPointsToAdd);

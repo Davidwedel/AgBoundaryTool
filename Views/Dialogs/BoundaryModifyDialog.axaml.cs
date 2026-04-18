@@ -4,22 +4,23 @@ using AgBoundaryTool.ViewModels;
 
 namespace AgBoundaryTool.Views.Dialogs;
 
-public partial class InnerBoundaryModifyDialog : Window
+public partial class BoundaryModifyDialog : Window
 {
-    public InnerBoundaryModifyDialog()
+    public BoundaryModifyDialog()
     {
         InitializeComponent();
     }
 
     private void TrimButton_Click(object? sender, RoutedEventArgs e)
     {
-        // Trim the selected inner boundary to outer boundary
+        // Trim inner boundary to outer boundary
         if (DataContext is MainWindowViewModel viewModel)
         {
             viewModel.TrimInnerBoundaryCommand.Execute(null);
         }
 
-        // Don't close - let user see the result
+        // Close the dialog
+        Close();
     }
 
     private void StartButton_Click(object? sender, RoutedEventArgs e)
@@ -27,14 +28,21 @@ public partial class InnerBoundaryModifyDialog : Window
         // Start recording the modification path
         if (DataContext is MainWindowViewModel viewModel)
         {
-            viewModel.StartInnerBoundaryRecordingCommand.Execute(null);
+            viewModel.StartBoundaryRecordingCommand.Execute(null);
         }
 
+        // Close the dialog
         Close();
     }
 
     private void CancelButton_Click(object? sender, RoutedEventArgs e)
     {
+        // Disable selection mode and close
+        if (DataContext is MainWindowViewModel viewModel)
+        {
+            viewModel.CancelBoundaryModifyCommand.Execute(null);
+        }
+
         Close();
     }
 }

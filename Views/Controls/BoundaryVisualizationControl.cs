@@ -36,9 +36,9 @@ public class BoundaryVisualizationControl : Control
     private HashSet<int> _selectedPointIndices = new HashSet<int>();
     private int? _firstSelectedIndex = null; // For range selection
 
-    // Inner boundary selection state
-    private int _selectedInnerBoundaryIndex = -1; // -1 = none selected
-    private bool _innerBoundarySelectionMode = false; // When true, clicking selects inner boundaries
+    // Boundary selection state
+    private int _selectedInnerBoundaryIndex = -2; // -2 = none, -1 = outer boundary, 0+ = inner boundary index
+    private bool _innerBoundarySelectionMode = false; // When true, clicking selects boundaries
 
     // Visual settings
     private const double GridSize = 50.0; // meters
@@ -160,15 +160,28 @@ public class BoundaryVisualizationControl : Control
             var mousePos = e.GetPosition(this);
             var modifiers = e.KeyModifiers;
 
-            // If in inner boundary selection mode, check for inner boundary clicks first
+            // If in boundary selection mode, check for boundary clicks first
             if (_innerBoundarySelectionMode)
             {
+                // Check inner boundaries first (they're on top visually)
                 int clickedInnerBoundary = FindInnerBoundaryAtPosition(mousePos);
                 if (clickedInnerBoundary >= 0)
                 {
                     _selectedInnerBoundaryIndex = clickedInnerBoundary;
                     InnerBoundarySelected?.Invoke(this, clickedInnerBoundary);
                     Console.WriteLine($"[VISUALIZATION] Inner boundary {clickedInnerBoundary} selected");
+                    InvalidateVisual();
+                    e.Handled = true;
+                    return;
+                }
+
+                // Check outer boundary
+                bool clickedOuterBoundary = IsOuterBoundaryAtPosition(mousePos);
+                if (clickedOuterBoundary)
+                {
+                    _selectedInnerBoundaryIndex = -1; // -1 means outer boundary
+                    InnerBoundarySelected?.Invoke(this, -1); // Fire event with -1 for outer boundary
+                    Console.WriteLine($"[VISUALIZATION] Outer boundary selected");
                     InvalidateVisual();
                     e.Handled = true;
                     return;
@@ -350,8 +363,8 @@ public class BoundaryVisualizationControl : Control
     public void DisableInnerBoundarySelectionMode()
     {
         _innerBoundarySelectionMode = false;
-        _selectedInnerBoundaryIndex = -1;
-        Console.WriteLine("[VISUALIZATION] Inner boundary selection mode disabled");
+        _selectedInnerBoundaryIndex = -2; // -2 = no selection
+        Console.WriteLine("[VISUALIZATION] Boundary selection mode disabled");
         Dispatcher.UIThread.Post(InvalidateVisual, DispatcherPriority.Render);
     }
 
@@ -436,6 +449,36 @@ public class BoundaryVisualizationControl : Control
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Find if the outer boundary contains the given screen position
+    /// Returns true if clicking near the outer boundary
+    /// </summary>
+    private bool IsOuterBoundaryAtPosition(Point screenPos)
+    {
+        const double hitRadius = 15.0; // pixels - click tolerance
+
+        if (_boundaryPoints.Count < 2) return false;
+
+        // Check if clicking near any point of the outer boundary
+        for (int i = 0; i < _boundaryPoints.Count; i++)
+        {
+            var point = _boundaryPoints[i];
+            var pointScreen = WorldToScreen(point.Easting, point.Northing);
+
+            double distance = Math.Sqrt(
+                Math.Pow(screenPos.X - pointScreen.X, 2) +
+                Math.Pow(screenPos.Y - pointScreen.Y, 2)
+            );
+
+            if (distance <= hitRadius)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -633,6 +676,11 @@ public class BoundaryVisualizationControl : Control
     {
         if (_boundaryPoints.Count < 2) return;
 
+        // Check if outer boundary is selected (use orange highlighting)
+        bool isOuterBoundarySelected = (_selectedInnerBoundaryIndex == -1);
+        var pen = isOuterBoundarySelected ? _selectedInnerBoundaryPen : _boundaryPen;
+        var brush = isOuterBoundarySelected ? _selectedInnerBoundaryBrush : _boundaryBrush;
+
         // Draw boundary lines
         for (int i = 0; i < _boundaryPoints.Count; i++)
         {
@@ -642,7 +690,7 @@ public class BoundaryVisualizationControl : Control
             var screen1 = WorldToScreen(p1.Easting, p1.Northing);
             var screen2 = WorldToScreen(p2.Easting, p2.Northing);
 
-            context.DrawLine(_boundaryPen, screen1, screen2);
+            context.DrawLine(pen, screen1, screen2);
         }
 
         // Draw boundary points
@@ -663,9 +711,9 @@ public class BoundaryVisualizationControl : Control
             }
             else
             {
-                // Draw normal points as green rectangles
+                // Draw normal points as rectangles (green or orange based on selection)
                 context.FillRectangle(
-                    _boundaryBrush,
+                    brush,
                     new Rect(screenPos.X - PointRadius / 2, screenPos.Y - PointRadius / 2,
                              PointRadius, PointRadius)
                 );

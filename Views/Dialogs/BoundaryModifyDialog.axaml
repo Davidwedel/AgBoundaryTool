@@ -1,28 +1,31 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:AgBoundaryTool.ViewModels"
-        x:Class="AgBoundaryTool.Views.Dialogs.InnerBoundaryModifyDialog"
+        x:Class="AgBoundaryTool.Views.Dialogs.BoundaryModifyDialog"
         x:DataType="vm:MainWindowViewModel"
-        Title="Modify Inner Boundary"
-        Width="450" Height="420"
+        Title="Modify Boundary"
+        Width="450" Height="480"
         CanResize="false">
 
-    <Border BorderBrush="Red" BorderThickness="2" CornerRadius="5" Padding="10" Margin="10">
+    <Border BorderBrush="Purple" BorderThickness="2" CornerRadius="5" Padding="10" Margin="10">
         <StackPanel Spacing="10">
-            <TextBlock Text="Modify Inner Boundary" FontWeight="Bold" FontSize="16"/>
+            <TextBlock Text="Modify Boundary" FontWeight="Bold" FontSize="16"/>
 
             <TextBlock TextWrapping="Wrap" FontSize="12" Foreground="Gray">
-                Click on an inner boundary in the visualization (highlighted in orange) or select from dropdown below. Then trim to outer boundary, or record a notch/bulge modification.
+                Select a boundary to modify, choose an operation (notch/bulge), then record your modification path.
             </TextBlock>
 
-            <!-- Inner Boundary Selection -->
+            <!-- Boundary Selection -->
             <Border Background="#F0F0F0" Padding="10" CornerRadius="3">
                 <StackPanel Spacing="5">
-                    <TextBlock Text="Select Inner Boundary:" FontWeight="Bold" FontSize="13"/>
-                    <ComboBox Name="InnerBoundaryComboBox"
-                              ItemsSource="{Binding InnerBoundaryChoices}"
-                              SelectedIndex="{Binding SelectedInnerBoundaryIndex}"
+                    <TextBlock Text="Select Boundary:" FontWeight="Bold" FontSize="13"/>
+                    <ComboBox Name="BoundaryComboBox"
+                              ItemsSource="{Binding BoundaryChoices}"
+                              SelectedIndex="{Binding SelectedBoundaryIndex}"
                               HorizontalAlignment="Stretch"/>
+                    <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="Gray">
+                        Click on a boundary in the visualization or select from dropdown above.
+                    </TextBlock>
                 </StackPanel>
             </Border>
 
@@ -32,20 +35,22 @@
                     <TextBlock Text="Operation:" FontWeight="Bold" FontSize="13"/>
 
                     <RadioButton GroupName="Operation"
-                                 IsChecked="{Binding IsInnerNotchOperation}"
-                                 Content="Notch (Cut into inner boundary - makes hole smaller)"/>
+                                 IsChecked="{Binding IsNotchOperation}"
+                                 Content="Notch (Cut into boundary - reduce area)"/>
 
                     <RadioButton GroupName="Operation"
-                                 IsChecked="{Binding IsInnerBulgeOperation}"
-                                 Content="Bulge (Expand inner boundary - makes hole bigger)"/>
+                                 IsChecked="{Binding IsBulgeOperation}"
+                                 Content="Bulge (Expand boundary - increase area)"/>
                 </StackPanel>
             </Border>
 
             <!-- Action Buttons -->
             <StackPanel Spacing="8" Margin="0,10,0,0">
+                <!-- Trim button only for inner boundaries -->
                 <Button Content="Trim to Outer Boundary"
                         Click="TrimButton_Click"
-                        IsEnabled="{Binding CanStartInnerModify}"
+                        IsVisible="{Binding IsInnerBoundarySelected}"
+                        IsEnabled="{Binding CanStartBoundaryModify}"
                         Background="DarkOrange" Foreground="White"
                         HorizontalAlignment="Stretch"
                         Height="40"
@@ -53,7 +58,7 @@
 
                 <Button Content="Start Recording (Notch/Bulge)"
                         Click="StartButton_Click"
-                        IsEnabled="{Binding CanStartInnerModify}"
+                        IsEnabled="{Binding CanStartBoundaryModify}"
                         Background="Green" Foreground="White"
                         HorizontalAlignment="Stretch"
                         Height="40"
