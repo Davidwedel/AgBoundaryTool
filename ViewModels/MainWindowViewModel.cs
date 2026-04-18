@@ -21,6 +21,7 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly GpsService _gpsService;
     private readonly BoundaryRecordingService _recordingService;
     private readonly SettingsService _settingsService;
+    private readonly BoundaryHistoryService _historyService;
     private Field? _currentField;
     private Position? _temporaryOrigin; // Used when no field exists
     private Views.Controls.BoundaryVisualizationControl? _visualizationControl;
@@ -163,6 +164,19 @@ public partial class MainWindowViewModel : ViewModelBase
     // Flag properties
     private int _nextFlagId = 1;
 
+    // Undo/Redo properties
+    [ObservableProperty]
+    private bool _canUndo = false;
+
+    [ObservableProperty]
+    private bool _canRedo = false;
+
+    [ObservableProperty]
+    private string _undoDescription = string.Empty;
+
+    [ObservableProperty]
+    private string _redoDescription = string.Empty;
+
     public ObservableCollection<string> AvailablePorts { get; } = new ObservableCollection<string>();
     public ObservableCollection<BoundaryPoint> BoundaryPoints { get; } = new ObservableCollection<BoundaryPoint>();
     public ObservableCollection<BoundaryPoint> NotchPoints { get; } = new ObservableCollection<BoundaryPoint>();
@@ -173,6 +187,7 @@ public partial class MainWindowViewModel : ViewModelBase
         _gpsService = new GpsService();
         _recordingService = new BoundaryRecordingService();
         _settingsService = new SettingsService();
+        _historyService = new BoundaryHistoryService(maxHistorySize: 50);
 
         _gpsService.PositionReceived += OnPositionReceived;
         _gpsService.ConnectionStatusChanged += OnConnectionStatusChanged;
@@ -395,6 +410,123 @@ public partial class MainWindowViewModel : ViewModelBase
         StatusText = "Click on an inner boundary in the visualization to select it";
     }
 
+    // Undo/Redo Commands
+    [RelayCommand]
+    private void Undo()
+    {
+        if (!_historyService.CanUndo || _currentField == null)
+        {
+            return;
+        }
+
+        var restoredBoundary = _historyService.Undo();
+        if (restoredBoundary != null)
+        {
+            ApplyBoundaryState(restoredBoundary, "Undo");
+            UpdateHistoryButtons();
+        }
+    }
+
+    [RelayCommand]
+    private void Redo()
+    {
+        if (!_historyService.CanRedo || _currentField == null)
+        {
+            return;
+        }
+
+        var restoredBoundary = _historyService.Redo();
+        if (restoredBoundary != null)
+        {
+            ApplyBoundaryState(restoredBoundary, "Redo");
+            UpdateHistoryButtons();
+        }
+    }
+
+    [RelayCommand]
+    private void OpenHistoryDialog()
+    {
+        var mainWindow = GetMainWindow();
+        if (mainWindow == null) return;
+
+        var dialog = new Views.Dialogs.BoundaryHistoryDialog
+        {
+            DataContext = this
+        };
+        ShowDialogOnLeft(dialog, mainWindow);
+    }
+
+    public BoundaryHistoryService GetHistoryService() => _historyService;
+
+    private void ApplyBoundaryState(Boundary restoredBoundary, string action)
+    {
+        if (_currentField == null) return;
+
+        // Update current field boundary
+        _currentField.Boundary = restoredBoundary;
+
+        // Update visualization for outer boundary
+        BoundaryPoints.Clear();
+        if (restoredBoundary.OuterBoundary?.Points != null)
+        {
+            foreach (var point in restoredBoundary.OuterBoundary.Points)
+            {
+                BoundaryPoints.Add(point);
+            }
+        }
+        _visualizationControl?.SetBoundaryPoints(BoundaryPoints);
+
+        // Update visualization for inner boundaries
+        if (restoredBoundary.InnerBoundaries != null && restoredBoundary.InnerBoundaries.Count > 0)
+        {
+            _visualizationControl?.SetInnerBoundaries(
+                restoredBoundary.InnerBoundaries.Select(ib => ib.Points));
+        }
+        else
+        {
+            _visualizationControl?.SetInnerBoundaries(Enumerable.Empty<IList<BoundaryPoint>>());
+        }
+
+        // Update point count and area
+        PointCount = BoundaryPoints.Count;
+        BoundaryArea = restoredBoundary.AreaHectares;
+
+        // Save to disk
+        BoundaryFileService.SaveBoundary(restoredBoundary, _currentField.DirectoryPath);
+
+        StatusText = $"{action} complete - {PointCount} points, {BoundaryArea:F2} ha";
+        Console.WriteLine($"[VIEWMODEL] {action} applied - History index: {_historyService.CurrentIndex}");
+    }
+
+    private void UpdateHistoryButtons()
+    {
+        CanUndo = _historyService.CanUndo;
+        CanRedo = _historyService.CanRedo;
+
+        // Update descriptions for tooltips
+        if (_historyService.CanUndo && _historyService.CurrentIndex > 0)
+        {
+            var prevEntry = _historyService.History[_historyService.CurrentIndex - 1];
+            UndoDescription = $"Undo: {prevEntry.ActionDescription}";
+        }
+        else
+        {
+            UndoDescription = "Nothing to undo";
+        }
+
+        if (_historyService.CanRedo && _historyService.CurrentIndex < _historyService.History.Count - 1)
+        {
+            var nextEntry = _historyService.History[_historyService.CurrentIndex + 1];
+            RedoDescription = $"Redo: {nextEntry.ActionDescription}";
+        }
+        else
+        {
+            RedoDescription = "Nothing to redo";
+        }
+
+        Console.WriteLine($"[VIEWMODEL] History buttons updated - CanUndo: {CanUndo}, CanRedo: {CanRedo}");
+    }
+
     [RelayCommand]
     private void TrimInnerBoundary()
     {
@@ -444,6 +576,12 @@ public partial class MainWindowViewModel : ViewModelBase
 
         StatusText = $"Inner boundary trimmed: {innerBoundary.Points.Count} points, {innerBoundary.AreaHectares:F2} ha";
         Console.WriteLine($"[VIEWMODEL] Inner boundary trimmed to {innerBoundary.Points.Count} points");
+
+        // Save state for undo (AFTER the change)
+        _historyService.SaveState(_currentField.Boundary, $"Trim Inner Boundary {SelectedInnerBoundaryIndex + 1}");
+
+        // Update history buttons
+        UpdateHistoryButtons();
     }
 
     private List<BoundaryPoint> TrimPolygonToOuterBoundary(IList<BoundaryPoint> innerPoints, IList<BoundaryPoint> outerPoints)
@@ -787,6 +925,9 @@ public partial class MainWindowViewModel : ViewModelBase
             _currentField.Boundary = new Boundary();
         }
 
+        bool isOuterBoundary = _currentField.Boundary.OuterBoundary == null;
+        string actionDesc = isOuterBoundary ? "Record Outer Boundary" : "Record Inner Boundary";
+
         if (_currentField.Boundary.OuterBoundary == null)
         {
             _currentField.Boundary.OuterBoundary = polygon;
@@ -802,6 +943,12 @@ public partial class MainWindowViewModel : ViewModelBase
         BoundaryArea = _currentField.Boundary.AreaHectares;
         IsRecording = false;
         StatusText = $"Boundary saved: {polygon.Points.Count} points, {polygon.AreaHectares:F2} ha";
+
+        // Save state for undo (AFTER the change)
+        _historyService.SaveState(_currentField.Boundary, actionDesc);
+
+        // Update history buttons
+        UpdateHistoryButtons();
     }
 
     [RelayCommand]
@@ -1111,6 +1258,11 @@ public partial class MainWindowViewModel : ViewModelBase
             // Update point count
             PointCount = BoundaryPoints.Count;
 
+            // Initialize history with the loaded boundary
+            _historyService.Clear();
+            _historyService.SaveState(field.Boundary, "Load Field");
+            UpdateHistoryButtons();
+
             // Save to settings
             SaveSettings();
 
@@ -1242,6 +1394,10 @@ public partial class MainWindowViewModel : ViewModelBase
 
         // Clear visualization
         _visualizationControl?.SetBoundaryPoints(BoundaryPoints);
+
+        // Clear history
+        _historyService.Clear();
+        UpdateHistoryButtons();
 
         StatusText = $"Closed field '{fieldName}'";
         Console.WriteLine($"[VIEWMODEL] Closed field: {fieldName}");
@@ -1460,6 +1616,12 @@ public partial class MainWindowViewModel : ViewModelBase
 
         StatusText = $"Deleted {indices.Count} point(s) - {PointCount} points remaining";
         Console.WriteLine($"[VIEWMODEL] Boundary now has {PointCount} points");
+
+        // Save state for undo (AFTER the change)
+        _historyService.SaveState(_currentField.Boundary, $"Delete {indices.Count} Point(s)");
+
+        // Update history buttons
+        UpdateHistoryButtons();
     }
 
     private void OnPositionReceived(object? sender, Position position)
@@ -1990,6 +2152,12 @@ public partial class MainWindowViewModel : ViewModelBase
 
             // Clear notch visualization
             _visualizationControl?.SetNotchPoints(NotchPoints);
+
+            // Save state for undo (AFTER the change)
+            _historyService.SaveState(_currentField.Boundary, "Apply Boundary Notch");
+
+            // Update history buttons
+            UpdateHistoryButtons();
         }
         catch (Exception ex)
         {
@@ -2072,6 +2240,8 @@ public partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
+        string operationName = _innerModifyOperation == "notch" ? "Notch" : "Bulge";
+
         try
         {
             var targetInnerBoundary = _currentField.Boundary.InnerBoundaries[_targetInnerBoundaryIndex];
@@ -2084,8 +2254,8 @@ public partial class MainWindowViewModel : ViewModelBase
             }
 
             int numModifications = allCrossings.Count / 2;
-            string operationName = _innerModifyOperation == "notch" ? "notch" : "bulge";
-            Console.WriteLine($"[VIEWMODEL] Applying {numModifications} inner {operationName}(es) from {allCrossings.Count} crossings");
+            string opName = _innerModifyOperation == "notch" ? "notch" : "bulge";
+            Console.WriteLine($"[VIEWMODEL] Applying {numModifications} inner {opName}(es) from {allCrossings.Count} crossings");
 
             // Apply the modification to the inner boundary
             var modifiedBoundary = ApplyInnerBoundaryModification(
@@ -2115,8 +2285,14 @@ public partial class MainWindowViewModel : ViewModelBase
             // Save modified boundary
             BoundaryFileService.SaveBoundary(_currentField.Boundary, _currentField.DirectoryPath);
 
-            StatusText = $"Inner boundary {operationName} applied successfully - Area: {BoundaryArea:F2} ha";
-            Console.WriteLine($"[VIEWMODEL] Inner boundary {operationName} applied. New inner boundary has {targetInnerBoundary.Points.Count} points");
+            StatusText = $"Inner boundary {opName} applied successfully - Area: {BoundaryArea:F2} ha";
+            Console.WriteLine($"[VIEWMODEL] Inner boundary {opName} applied. New inner boundary has {targetInnerBoundary.Points.Count} points");
+
+            // Save state for undo (AFTER the change)
+            _historyService.SaveState(_currentField.Boundary, $"Apply Inner Boundary {operationName}");
+
+            // Update history buttons
+            UpdateHistoryButtons();
         }
         catch (Exception ex)
         {
