@@ -26,8 +26,13 @@
                     Command="{Binding CreateNewFieldCommand}"
                     IsEnabled="{Binding IsConnected}"/>
 
-            <Button Content="Load Field"
-                    Command="{Binding LoadFieldCommand}"/>
+            <Button Content="Load Field (from AgBoundaryTool)"
+                    Command="{Binding LoadFieldCommand}"
+                    ToolTip.Tip="Load a field from your AgBoundaryTool fields directory"/>
+
+            <Button Content="Import Field (from anywhere)"
+                    Command="{Binding ImportFieldCommand}"
+                    ToolTip.Tip="Import a field from any location and copy it to your AgBoundaryTool directory"/>
 
             <Button Content="Save As..."
                     Command="{Binding SaveFieldAsCommand}"/>

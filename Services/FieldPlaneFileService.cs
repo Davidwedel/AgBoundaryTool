@@ -16,7 +16,7 @@ namespace AgBoundaryTool.Services;
 public static class FieldPlaneFileService
 {
     /// <summary>
-    /// Load field metadata from Field.txt
+    /// Load field metadata from Field.txt (case-insensitive)
     /// </summary>
     public static Field LoadField(string fieldDirectory)
     {
@@ -26,9 +26,17 @@ public static class FieldPlaneFileService
             DirectoryPath = fieldDirectory
         };
 
+        // Try to find field file (case-insensitive for cross-platform compatibility)
         var fieldFilePath = Path.Combine(fieldDirectory, "Field.txt");
         if (!File.Exists(fieldFilePath))
         {
+            // Try with capital T (AgOpenGPS format)
+            fieldFilePath = Path.Combine(fieldDirectory, "Field.Txt");
+        }
+
+        if (!File.Exists(fieldFilePath))
+        {
+            Console.WriteLine($"[FIELD] Field.txt not found in {fieldDirectory}");
             throw new FileNotFoundException("Field.txt not found", fieldFilePath);
         }
 

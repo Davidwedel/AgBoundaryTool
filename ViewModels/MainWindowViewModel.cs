@@ -21,6 +21,7 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly GpsService _gpsService;
     private readonly BoundaryRecordingService _recordingService;
     private readonly SettingsService _settingsService;
+    private readonly BoundaryHistoryService _historyService;
     private Field? _currentField;
     private Position? _temporaryOrigin; // Used when no field exists
     private Views.Controls.BoundaryVisualizationControl? _visualizationControl;
@@ -221,6 +222,19 @@ public partial class MainWindowViewModel : ViewModelBase
     // Flag properties
     private int _nextFlagId = 1;
 
+    // Undo/Redo properties
+    [ObservableProperty]
+    private bool _canUndo = false;
+
+    [ObservableProperty]
+    private bool _canRedo = false;
+
+    [ObservableProperty]
+    private string _undoDescription = string.Empty;
+
+    [ObservableProperty]
+    private string _redoDescription = string.Empty;
+
     public ObservableCollection<string> AvailablePorts { get; } = new ObservableCollection<string>();
     public ObservableCollection<BoundaryPoint> BoundaryPoints { get; } = new ObservableCollection<BoundaryPoint>();
     public ObservableCollection<BoundaryPoint> NotchPoints { get; } = new ObservableCollection<BoundaryPoint>();
@@ -231,6 +245,7 @@ public partial class MainWindowViewModel : ViewModelBase
         _gpsService = new GpsService();
         _recordingService = new BoundaryRecordingService();
         _settingsService = new SettingsService();
+        _historyService = new BoundaryHistoryService(maxHistorySize: 50);
 
         _gpsService.PositionReceived += OnPositionReceived;
         _gpsService.ConnectionStatusChanged += OnConnectionStatusChanged;
@@ -499,6 +514,123 @@ public partial class MainWindowViewModel : ViewModelBase
         StatusText = "Boundary modification cancelled";
     }
 
+    // Undo/Redo Commands
+    [RelayCommand]
+    private void Undo()
+    {
+        if (!_historyService.CanUndo || _currentField == null)
+        {
+            return;
+        }
+
+        var restoredBoundary = _historyService.Undo();
+        if (restoredBoundary != null)
+        {
+            ApplyBoundaryState(restoredBoundary, "Undo");
+            UpdateHistoryButtons();
+        }
+    }
+
+    [RelayCommand]
+    private void Redo()
+    {
+        if (!_historyService.CanRedo || _currentField == null)
+        {
+            return;
+        }
+
+        var restoredBoundary = _historyService.Redo();
+        if (restoredBoundary != null)
+        {
+            ApplyBoundaryState(restoredBoundary, "Redo");
+            UpdateHistoryButtons();
+        }
+    }
+
+    [RelayCommand]
+    private void OpenHistoryDialog()
+    {
+        var mainWindow = GetMainWindow();
+        if (mainWindow == null) return;
+
+        var dialog = new Views.Dialogs.BoundaryHistoryDialog
+        {
+            DataContext = this
+        };
+        ShowDialogOnLeft(dialog, mainWindow);
+    }
+
+    public BoundaryHistoryService GetHistoryService() => _historyService;
+
+    private void ApplyBoundaryState(Boundary restoredBoundary, string action)
+    {
+        if (_currentField == null) return;
+
+        // Update current field boundary
+        _currentField.Boundary = restoredBoundary;
+
+        // Update visualization for outer boundary
+        BoundaryPoints.Clear();
+        if (restoredBoundary.OuterBoundary?.Points != null)
+        {
+            foreach (var point in restoredBoundary.OuterBoundary.Points)
+            {
+                BoundaryPoints.Add(point);
+            }
+        }
+        _visualizationControl?.SetBoundaryPoints(BoundaryPoints);
+
+        // Update visualization for inner boundaries
+        if (restoredBoundary.InnerBoundaries != null && restoredBoundary.InnerBoundaries.Count > 0)
+        {
+            _visualizationControl?.SetInnerBoundaries(
+                restoredBoundary.InnerBoundaries.Select(ib => ib.Points));
+        }
+        else
+        {
+            _visualizationControl?.SetInnerBoundaries(Enumerable.Empty<IList<BoundaryPoint>>());
+        }
+
+        // Update point count and area
+        PointCount = BoundaryPoints.Count;
+        BoundaryArea = restoredBoundary.AreaHectares;
+
+        // Save to disk
+        BoundaryFileService.SaveBoundary(restoredBoundary, _currentField.DirectoryPath);
+
+        StatusText = $"{action} complete - {PointCount} points, {BoundaryArea:F2} ha";
+        Console.WriteLine($"[VIEWMODEL] {action} applied - History index: {_historyService.CurrentIndex}");
+    }
+
+    private void UpdateHistoryButtons()
+    {
+        CanUndo = _historyService.CanUndo;
+        CanRedo = _historyService.CanRedo;
+
+        // Update descriptions for tooltips
+        if (_historyService.CanUndo && _historyService.CurrentIndex > 0)
+        {
+            var prevEntry = _historyService.History[_historyService.CurrentIndex - 1];
+            UndoDescription = $"Undo: {prevEntry.ActionDescription}";
+        }
+        else
+        {
+            UndoDescription = "Nothing to undo";
+        }
+
+        if (_historyService.CanRedo && _historyService.CurrentIndex < _historyService.History.Count - 1)
+        {
+            var nextEntry = _historyService.History[_historyService.CurrentIndex + 1];
+            RedoDescription = $"Redo: {nextEntry.ActionDescription}";
+        }
+        else
+        {
+            RedoDescription = "Nothing to redo";
+        }
+
+        Console.WriteLine($"[VIEWMODEL] History buttons updated - CanUndo: {CanUndo}, CanRedo: {CanRedo}");
+    }
+
     [RelayCommand]
     private void TrimInnerBoundary()
     {
@@ -549,6 +681,12 @@ public partial class MainWindowViewModel : ViewModelBase
 
         StatusText = $"Inner boundary trimmed: {innerBoundary.Points.Count} points, {innerBoundary.AreaHectares:F2} ha";
         Console.WriteLine($"[VIEWMODEL] Inner boundary trimmed to {innerBoundary.Points.Count} points");
+
+        // Save state for undo (AFTER the change)
+        _historyService.SaveState(_currentField.Boundary, $"Trim Inner Boundary {SelectedBoundaryIndex}");
+
+        // Update history buttons
+        UpdateHistoryButtons();
     }
 
     private List<BoundaryPoint> TrimPolygonToOuterBoundary(IList<BoundaryPoint> innerPoints, IList<BoundaryPoint> outerPoints)
@@ -738,6 +876,50 @@ public partial class MainWindowViewModel : ViewModelBase
         return Avalonia.Application.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
             ? desktop.MainWindow
             : null;
+    }
+
+    private async Task ShowMessageBox(string title, string message)
+    {
+        var mainWindow = GetMainWindow();
+        if (mainWindow == null) return;
+
+        var messageBox = new Avalonia.Controls.Window
+        {
+            Title = title,
+            Width = 400,
+            Height = 200,
+            WindowStartupLocation = Avalonia.Controls.WindowStartupLocation.CenterOwner,
+            CanResize = false
+        };
+
+        var stack = new Avalonia.Controls.StackPanel
+        {
+            Margin = new Avalonia.Thickness(20),
+            Spacing = 15
+        };
+
+        var messageText = new Avalonia.Controls.TextBlock
+        {
+            Text = message,
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            FontSize = 14
+        };
+
+        var okButton = new Avalonia.Controls.Button
+        {
+            Content = "OK",
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+            Width = 80,
+            Height = 30
+        };
+
+        okButton.Click += (s, e) => messageBox.Close();
+
+        stack.Children.Add(messageText);
+        stack.Children.Add(okButton);
+        messageBox.Content = stack;
+
+        await messageBox.ShowDialog(mainWindow);
     }
 
     private void ShowDialogOnLeft(Avalonia.Controls.Window dialog, Avalonia.Controls.Window owner)
@@ -948,6 +1130,9 @@ public partial class MainWindowViewModel : ViewModelBase
             _currentField.Boundary = new Boundary();
         }
 
+        bool isOuterBoundary = _currentField.Boundary.OuterBoundary == null;
+        string actionDesc = isOuterBoundary ? "Record Outer Boundary" : "Record Inner Boundary";
+
         if (_currentField.Boundary.OuterBoundary == null)
         {
             _currentField.Boundary.OuterBoundary = polygon;
@@ -963,6 +1148,12 @@ public partial class MainWindowViewModel : ViewModelBase
         BoundaryArea = _currentField.Boundary.AreaHectares;
         IsRecording = false;
         StatusText = $"Boundary saved: {polygon.Points.Count} points, {polygon.AreaHectares:F2} ha";
+
+        // Save state for undo (AFTER the change)
+        _historyService.SaveState(_currentField.Boundary, actionDesc);
+
+        // Update history buttons
+        UpdateHistoryButtons();
     }
 
     [RelayCommand]
@@ -1145,7 +1336,31 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         try
         {
-            // Use Avalonia's folder picker, starting in the fields directory
+            // Ensure fields directory exists
+            if (string.IsNullOrEmpty(FieldDirectory))
+            {
+                StatusText = "Field directory not set";
+                return;
+            }
+
+            if (!Directory.Exists(FieldDirectory))
+            {
+                Directory.CreateDirectory(FieldDirectory);
+                Console.WriteLine($"[VIEWMODEL] Created fields directory: {FieldDirectory}");
+            }
+
+            // Get list of field directories
+            var fieldDirs = Directory.GetDirectories(FieldDirectory);
+            if (fieldDirs.Length == 0)
+            {
+                StatusText = "No fields found in AgBoundaryTool directory";
+                await ShowMessageBox("No Fields Found",
+                    "No fields were found in your AgBoundaryTool directory.\n\n" +
+                    "Use 'Import Field' to copy a field from AgOpenGPS or another location, or 'Create New Field' to start fresh.");
+                return;
+            }
+
+            // Use Avalonia's folder picker, RESTRICTED to fields directory only
             var topLevel = Avalonia.Application.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
                 ? desktop.MainWindow
                 : null;
@@ -1161,7 +1376,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
             var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new Avalonia.Platform.Storage.FolderPickerOpenOptions
             {
-                Title = "Select Field to Load",
+                Title = "Select Field from AgBoundaryTool Directory",
                 AllowMultiple = false,
                 SuggestedStartLocation = startFolder
             });
@@ -1171,6 +1386,21 @@ public partial class MainWindowViewModel : ViewModelBase
                 var selectedPath = folders[0].Path.LocalPath;
                 if (!string.IsNullOrEmpty(selectedPath))
                 {
+                    // Verify the selected path is within the FieldDirectory
+                    var normalizedSelected = Path.GetFullPath(selectedPath);
+                    var normalizedFieldDir = Path.GetFullPath(FieldDirectory);
+
+                    if (!normalizedSelected.StartsWith(normalizedFieldDir, StringComparison.OrdinalIgnoreCase))
+                    {
+                        StatusText = "Cannot load field from outside AgBoundaryTool directory";
+                        Console.WriteLine($"[VIEWMODEL] Rejected load from outside directory: {normalizedSelected}");
+                        await ShowMessageBox("Load Restricted",
+                            "You can only load fields from your AgBoundaryTool directory.\n\n" +
+                            "To work with fields from other locations (like AgOpenGPS), use the 'Import Field' button instead.\n\n" +
+                            "Import will copy the field to your AgBoundaryTool directory so you can safely edit it.");
+                        return;
+                    }
+
                     Console.WriteLine($"[VIEWMODEL] Loading field from: {selectedPath}");
                     LoadFieldByPath(selectedPath);
                 }
@@ -1255,6 +1485,11 @@ public partial class MainWindowViewModel : ViewModelBase
             // Update point count
             PointCount = BoundaryPoints.Count;
 
+            // Initialize history with the loaded boundary
+            _historyService.Clear();
+            _historyService.SaveState(field.Boundary, "Load Field");
+            UpdateHistoryButtons();
+
             // Save to settings
             SaveSettings();
 
@@ -1289,73 +1524,50 @@ public partial class MainWindowViewModel : ViewModelBase
 
         try
         {
-            // Use Avalonia's folder picker to select parent directory where field folder will be created
-            var topLevel = Avalonia.Application.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
-                ? desktop.MainWindow
-                : null;
-
-            if (topLevel == null)
+            // Ensure fields directory exists
+            if (!Directory.Exists(FieldDirectory))
             {
-                StatusText = "Cannot open folder picker";
+                Directory.CreateDirectory(FieldDirectory);
+            }
+
+            // Save directly to AgBoundaryTool fields directory with the current field name
+            var newFieldPath = Path.Combine(FieldDirectory, FieldName);
+
+            Console.WriteLine($"[VIEWMODEL] Saving field to: {newFieldPath}");
+
+            // Check if directory already exists
+            if (Directory.Exists(newFieldPath) && newFieldPath != _currentField.DirectoryPath)
+            {
+                StatusText = $"Field '{FieldName}' already exists in AgBoundaryTool directory";
+                Console.WriteLine($"[VIEWMODEL] Field already exists at {newFieldPath}");
                 return;
             }
 
-            // Get suggested start location (fields directory)
-            var startFolder = await topLevel.StorageProvider.TryGetFolderFromPathAsync(new Uri(FieldDirectory));
-
-            var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new Avalonia.Platform.Storage.FolderPickerOpenOptions
+            // Create directory if it doesn't exist
+            if (!Directory.Exists(newFieldPath))
             {
-                Title = $"Select Directory to Save Field '{FieldName}'",
-                AllowMultiple = false,
-                SuggestedStartLocation = startFolder
-            });
-
-            if (folders.Count > 0)
-            {
-                var parentPath = folders[0].Path.LocalPath;
-                if (!string.IsNullOrEmpty(parentPath))
-                {
-                    // Create field directory in selected parent location
-                    var newFieldPath = Path.Combine(parentPath, FieldName);
-
-                    Console.WriteLine($"[VIEWMODEL] Saving field to: {newFieldPath}");
-
-                    // Check if directory already exists
-                    if (Directory.Exists(newFieldPath))
-                    {
-                        StatusText = $"Field '{FieldName}' already exists at {newFieldPath}";
-                        Console.WriteLine($"[VIEWMODEL] Field already exists, overwriting...");
-                    }
-                    else
-                    {
-                        Directory.CreateDirectory(newFieldPath);
-                    }
-
-                    // Update field name and directory path
-                    _currentField.Name = FieldName;
-                    _currentField.DirectoryPath = newFieldPath;
-
-                    // Save field to new location
-                    FieldPlaneFileService.SaveField(_currentField, newFieldPath);
-                    Console.WriteLine($"[VIEWMODEL] Saved Field.txt to {newFieldPath}");
-
-                    if (_currentField.Boundary != null)
-                    {
-                        BoundaryFileService.SaveBoundary(_currentField.Boundary, newFieldPath);
-                        Console.WriteLine($"[VIEWMODEL] Saved Boundary.txt to {newFieldPath}");
-                    }
-
-                    StatusText = $"Field '{FieldName}' saved to {newFieldPath}";
-                    Console.WriteLine($"[VIEWMODEL] Field save complete");
-
-                    // Save to settings
-                    SaveSettings();
-                }
+                Directory.CreateDirectory(newFieldPath);
             }
-            else
+
+            // Update field name and directory path
+            _currentField.Name = FieldName;
+            _currentField.DirectoryPath = newFieldPath;
+
+            // Save field to new location
+            FieldPlaneFileService.SaveField(_currentField, newFieldPath);
+            Console.WriteLine($"[VIEWMODEL] Saved Field.txt to {newFieldPath}");
+
+            if (_currentField.Boundary != null)
             {
-                StatusText = "Save cancelled";
+                BoundaryFileService.SaveBoundary(_currentField.Boundary, newFieldPath);
+                Console.WriteLine($"[VIEWMODEL] Saved Boundary.txt to {newFieldPath}");
             }
+
+            StatusText = $"Field '{FieldName}' saved to AgBoundaryTool directory";
+            Console.WriteLine($"[VIEWMODEL] Field save complete");
+
+            // Save to settings
+            SaveSettings();
         }
         catch (Exception ex)
         {
@@ -1387,6 +1599,10 @@ public partial class MainWindowViewModel : ViewModelBase
         // Clear visualization
         _visualizationControl?.SetBoundaryPoints(BoundaryPoints);
 
+        // Clear history
+        _historyService.Clear();
+        UpdateHistoryButtons();
+
         StatusText = $"Closed field '{fieldName}'";
         Console.WriteLine($"[VIEWMODEL] Closed field: {fieldName}");
 
@@ -1399,7 +1615,7 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         try
         {
-            // Use Avalonia's folder picker
+            // Use Avalonia's folder picker - can browse anywhere
             var topLevel = Avalonia.Application.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
                 ? desktop.MainWindow
                 : null;
@@ -1412,24 +1628,174 @@ public partial class MainWindowViewModel : ViewModelBase
 
             var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new Avalonia.Platform.Storage.FolderPickerOpenOptions
             {
-                Title = "Select Field Directory to Import",
+                Title = "Select Field Directory to Import (will be copied to AgBoundaryTool)",
                 AllowMultiple = false
             });
 
             if (folders.Count > 0)
             {
-                var selectedPath = folders[0].Path.LocalPath;
-                if (!string.IsNullOrEmpty(selectedPath))
+                var sourcePath = folders[0].Path.LocalPath;
+                if (!string.IsNullOrEmpty(sourcePath))
                 {
-                    Console.WriteLine($"[VIEWMODEL] Importing field from: {selectedPath}");
-                    LoadFieldByPath(selectedPath);
+                    Console.WriteLine($"[VIEWMODEL] ===== IMPORT STARTING =====");
+                    Console.WriteLine($"[VIEWMODEL] Source path: {sourcePath}");
+
+                    // Verify source directory exists
+                    if (!Directory.Exists(sourcePath))
+                    {
+                        StatusText = $"Source directory does not exist";
+                        Console.WriteLine($"[VIEWMODEL] Import failed - source directory not found");
+                        await ShowMessageBox("Import Failed",
+                            $"The selected directory does not exist:\n\n{sourcePath}");
+                        return;
+                    }
+
+                    // Get the field name from the source directory
+                    // Remove trailing slashes/backslashes that cause GetFileName to return empty
+                    var cleanSourcePath = sourcePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    var fieldName = Path.GetFileName(cleanSourcePath);
+                    Console.WriteLine($"[VIEWMODEL] Field name: '{fieldName}'");
+
+                    if (string.IsNullOrWhiteSpace(fieldName))
+                    {
+                        StatusText = "Cannot determine field name";
+                        Console.WriteLine($"[VIEWMODEL] Import failed - empty field name");
+                        await ShowMessageBox("Import Failed",
+                            "Cannot determine the field name from the selected directory.\n\nPlease select a valid field directory.");
+                        return;
+                    }
+
+                    // Ensure destination directory exists
+                    if (!Directory.Exists(FieldDirectory))
+                    {
+                        Directory.CreateDirectory(FieldDirectory);
+                        Console.WriteLine($"[VIEWMODEL] Created destination directory: {FieldDirectory}");
+                    }
+
+                    // Check if field already exists in destination
+                    var destPath = Path.Combine(FieldDirectory, fieldName);
+                    Console.WriteLine($"[VIEWMODEL] Destination path: {destPath}");
+
+                    if (Directory.Exists(destPath))
+                    {
+                        StatusText = $"Field '{fieldName}' already exists";
+                        Console.WriteLine($"[VIEWMODEL] Import cancelled - field already exists");
+                        await ShowMessageBox("Import Cancelled",
+                            $"A field named '{fieldName}' already exists in your AgBoundaryTool directory.\n\n" +
+                            $"Location: {destPath}\n\n" +
+                            $"Please rename the existing field or choose a different field to import.");
+                        return;
+                    }
+
+                    // Copy the field directory to AgBoundaryTool fields directory
+                    StatusText = $"Copying field '{fieldName}'...";
+                    Console.WriteLine($"[VIEWMODEL] Starting copy operation...");
+
+                    CopyDirectory(sourcePath, destPath);
+
+                    Console.WriteLine($"[VIEWMODEL] Copy complete");
+
+                    // Verify the copy succeeded
+                    if (!Directory.Exists(destPath))
+                    {
+                        StatusText = $"Import failed - destination not created";
+                        Console.WriteLine($"[VIEWMODEL] ERROR: Destination directory was not created");
+                        await ShowMessageBox("Import Failed",
+                            $"Failed to create the destination directory:\n\n{destPath}\n\n" +
+                            $"Please check file permissions and try again.");
+                        return;
+                    }
+
+                    // List files that were copied
+                    var copiedFiles = Directory.GetFiles(destPath);
+                    Console.WriteLine($"[VIEWMODEL] Copied {copiedFiles.Length} files to destination");
+                    foreach (var file in copiedFiles)
+                    {
+                        Console.WriteLine($"[VIEWMODEL]   - {Path.GetFileName(file)}");
+                    }
+
+                    // Now load from the copied location
+                    StatusText = $"Loading imported field '{fieldName}'...";
+                    Console.WriteLine($"[VIEWMODEL] Loading field from: {destPath}");
+
+                    LoadFieldByPath(destPath);
+
+                    Console.WriteLine($"[VIEWMODEL] ===== IMPORT COMPLETE =====");
                 }
+            }
+            else
+            {
+                Console.WriteLine($"[VIEWMODEL] Import cancelled by user");
             }
         }
         catch (Exception ex)
         {
-            StatusText = $"Error importing field: {ex.Message}";
+            StatusText = $"Error importing field";
             Console.WriteLine($"[VIEWMODEL] Import field error: {ex.Message}");
+            Console.WriteLine($"[VIEWMODEL] Stack trace: {ex.StackTrace}");
+            await ShowMessageBox("Import Error",
+                $"An error occurred while importing the field:\n\n{ex.Message}\n\n" +
+                $"Check the console output for more details.");
+        }
+    }
+
+    /// <summary>
+    /// Copy a directory and all its contents recursively
+    /// </summary>
+    private void CopyDirectory(string sourceDir, string destDir)
+    {
+        try
+        {
+            Console.WriteLine($"[VIEWMODEL] CopyDirectory: {sourceDir} -> {destDir}");
+
+            // Create destination directory
+            if (!Directory.Exists(destDir))
+            {
+                Directory.CreateDirectory(destDir);
+                Console.WriteLine($"[VIEWMODEL] Created directory: {destDir}");
+            }
+
+            // Copy all files
+            var files = Directory.GetFiles(sourceDir);
+            Console.WriteLine($"[VIEWMODEL] Copying {files.Length} files...");
+
+            foreach (var file in files)
+            {
+                var fileName = Path.GetFileName(file);
+                var destFile = Path.Combine(destDir, fileName);
+
+                try
+                {
+                    File.Copy(file, destFile, overwrite: true);
+                    Console.WriteLine($"[VIEWMODEL]   ✓ Copied: {fileName}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[VIEWMODEL]   ✗ Failed to copy {fileName}: {ex.Message}");
+                    throw;
+                }
+            }
+
+            // Copy all subdirectories recursively
+            var subDirs = Directory.GetDirectories(sourceDir);
+            if (subDirs.Length > 0)
+            {
+                Console.WriteLine($"[VIEWMODEL] Copying {subDirs.Length} subdirectories...");
+
+                foreach (var subDir in subDirs)
+                {
+                    var dirName = Path.GetFileName(subDir);
+                    var destSubDir = Path.Combine(destDir, dirName);
+                    CopyDirectory(subDir, destSubDir);
+                }
+            }
+
+            Console.WriteLine($"[VIEWMODEL] CopyDirectory complete: {destDir}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[VIEWMODEL] CopyDirectory error: {ex.Message}");
+            throw;
         }
     }
 
@@ -1608,6 +1974,12 @@ public partial class MainWindowViewModel : ViewModelBase
 
         StatusText = $"Deleted {indices.Count} point(s) - {PointCount} points remaining";
         Console.WriteLine($"[VIEWMODEL] Boundary now has {PointCount} points");
+
+        // Save state for undo (AFTER the change)
+        _historyService.SaveState(_currentField.Boundary, $"Delete {indices.Count} Point(s)");
+
+        // Update history buttons
+        UpdateHistoryButtons();
     }
 
     private void OnPositionReceived(object? sender, Position position)

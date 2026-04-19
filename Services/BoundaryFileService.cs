@@ -17,17 +17,27 @@ namespace AgBoundaryTool.Services;
 public static class BoundaryFileService
 {
     /// <summary>
-    /// Load boundary from Boundary.txt
+    /// Load boundary from Boundary.txt (case-insensitive)
     /// </summary>
     public static Boundary LoadBoundary(string fieldDirectory)
     {
         var boundary = new Boundary();
+
+        // Try to find boundary file (case-insensitive for cross-platform compatibility)
         var boundaryFilePath = Path.Combine(fieldDirectory, "Boundary.txt");
+        if (!File.Exists(boundaryFilePath))
+        {
+            // Try with capital T (AgOpenGPS format)
+            boundaryFilePath = Path.Combine(fieldDirectory, "Boundary.Txt");
+        }
 
         if (!File.Exists(boundaryFilePath))
         {
+            Console.WriteLine($"[BOUNDARY] No boundary file found in {fieldDirectory}");
             return boundary; // Return empty boundary if file doesn't exist
         }
+
+        Console.WriteLine($"[BOUNDARY] Loading from: {boundaryFilePath}");
 
         using (var reader = new StreamReader(boundaryFilePath))
         {
