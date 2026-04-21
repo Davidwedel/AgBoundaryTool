@@ -26,6 +26,7 @@ public class BoundaryVisualizationControl : Control
     private Point _offset = new Point(0, 0);
     private bool _autoZoom = true;
     private int _vehicleUpdateCount = 0;
+    private (double x1, double y1, double x2, double y2)? _splitLine = null;
 
     // Panning state
     private bool _isPanning = false;
@@ -55,6 +56,7 @@ public class BoundaryVisualizationControl : Control
     private readonly SolidColorBrush _notchBrush = new SolidColorBrush(Color.FromRgb(200, 0, 200)); // Purple/Magenta
     private readonly SolidColorBrush _selectedBrush = new SolidColorBrush(Color.FromRgb(255, 255, 0)); // Yellow
     private readonly SolidColorBrush _flagTextBrush = new SolidColorBrush(Color.FromRgb(255, 255, 255)); // White
+    private readonly SolidColorBrush _splitLineBrush = new SolidColorBrush(Color.FromRgb(0, 255, 255)); // Cyan
     private readonly SolidColorBrush _backgroundBrush = new SolidColorBrush(Color.FromRgb(40, 40, 40));
     private readonly Pen _gridPen;
     private readonly Pen _boundaryPen;
@@ -63,6 +65,7 @@ public class BoundaryVisualizationControl : Control
     private readonly Pen _vehiclePen;
     private readonly Pen _notchPen;
     private readonly Pen _selectedPen;
+    private readonly Pen _splitLinePen;
 
     public BoundaryVisualizationControl()
     {
@@ -73,6 +76,7 @@ public class BoundaryVisualizationControl : Control
         _vehiclePen = new Pen(_vehicleBrush, 2.0);
         _notchPen = new Pen(_notchBrush, LineThickness + 1);
         _selectedPen = new Pen(_selectedBrush, 3.0);
+        _splitLinePen = new Pen(_splitLineBrush, 3.0); // Thick cyan line for split
 
         // Update on data changes
         ClipToBounds = true;
@@ -349,6 +353,24 @@ public class BoundaryVisualizationControl : Control
     }
 
     /// <summary>
+    /// Set the split line for visualization (used during field splitting)
+    /// </summary>
+    public void SetSplitLine(double x1, double y1, double x2, double y2)
+    {
+        _splitLine = (x1, y1, x2, y2);
+        Dispatcher.UIThread.Post(InvalidateVisual, DispatcherPriority.Render);
+    }
+
+    /// <summary>
+    /// Clear the split line visualization
+    /// </summary>
+    public void ClearSplitLine()
+    {
+        _splitLine = null;
+        Dispatcher.UIThread.Post(InvalidateVisual, DispatcherPriority.Render);
+    }
+
+    /// <summary>
     /// Enable inner boundary selection mode (clicking selects inner boundaries)
     /// </summary>
     public void EnableInnerBoundarySelectionMode()
@@ -395,6 +417,7 @@ public class BoundaryVisualizationControl : Control
         _notchPoints.Clear();
         _flags.Clear();
         _vehiclePosition = null;
+        _splitLine = null;
         _manualPanActive = false; // Reset manual pan flag
         _selectedPointIndices.Clear();
         _firstSelectedIndex = null;
@@ -639,6 +662,9 @@ public class BoundaryVisualizationControl : Control
         // Draw notch points
         DrawNotchPoints(context);
 
+        // Draw split line
+        DrawSplitLine(context);
+
         // Draw flags
         DrawFlags(context);
 
@@ -812,6 +838,31 @@ public class BoundaryVisualizationControl : Control
                 PointRadius * 2, PointRadius * 2));
             context.DrawGeometry(_notchBrush, _notchPen, circle);
         }
+    }
+
+    private void DrawSplitLine(DrawingContext context)
+    {
+        if (!_splitLine.HasValue) return;
+
+        var (x1, y1, x2, y2) = _splitLine.Value;
+        var screen1 = WorldToScreen(x1, y1);
+        var screen2 = WorldToScreen(x2, y2);
+
+        // Draw the split line with dashed pattern
+        var dashedPen = new Pen(_splitLineBrush, 3.0, new DashStyle(new double[] { 4, 2 }, 0));
+        context.DrawLine(dashedPen, screen1, screen2);
+
+        // Draw endpoint circles
+        double endpointRadius = 6.0;
+        var circle1 = new EllipseGeometry(new Rect(
+            screen1.X - endpointRadius, screen1.Y - endpointRadius,
+            endpointRadius * 2, endpointRadius * 2));
+        var circle2 = new EllipseGeometry(new Rect(
+            screen2.X - endpointRadius, screen2.Y - endpointRadius,
+            endpointRadius * 2, endpointRadius * 2));
+
+        context.DrawGeometry(_splitLineBrush, _splitLinePen, circle1);
+        context.DrawGeometry(_splitLineBrush, _splitLinePen, circle2);
     }
 
     private void DrawFlags(DrawingContext context)

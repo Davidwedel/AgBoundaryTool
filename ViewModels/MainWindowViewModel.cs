@@ -235,6 +235,51 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     private string _redoDescription = string.Empty;
 
+    // Field Split properties
+    [ObservableProperty]
+    private bool _isSplitByOnePoint = true;
+
+    [ObservableProperty]
+    private bool _isSplitByTwoPoints = false;
+
+    partial void OnIsSplitByOnePointChanged(bool value)
+    {
+        if (value) IsSplitByTwoPoints = false;
+        UpdateCanSplitField();
+    }
+
+    partial void OnIsSplitByTwoPointsChanged(bool value)
+    {
+        if (value) IsSplitByOnePoint = false;
+        UpdateCanSplitField();
+    }
+
+    [ObservableProperty]
+    private double _splitHeading = 0.0;
+
+    partial void OnSplitHeadingChanged(double value)
+    {
+        UpdateSplitLineVisualization();
+    }
+
+    [ObservableProperty]
+    private string _splitPoint1Status = "No point dropped";
+
+    [ObservableProperty]
+    private string _splitPoint2Status = "No point dropped";
+
+    [ObservableProperty]
+    private string _splitFieldNameA = string.Empty;
+
+    [ObservableProperty]
+    private string _splitFieldNameB = string.Empty;
+
+    [ObservableProperty]
+    private bool _canSplitField = false;
+
+    private BoundaryPoint? _splitPoint1 = null;
+    private BoundaryPoint? _splitPoint2 = null;
+
     public ObservableCollection<string> AvailablePorts { get; } = new ObservableCollection<string>();
     public ObservableCollection<BoundaryPoint> BoundaryPoints { get; } = new ObservableCollection<BoundaryPoint>();
     public ObservableCollection<BoundaryPoint> NotchPoints { get; } = new ObservableCollection<BoundaryPoint>();
@@ -2272,6 +2317,409 @@ public partial class MainWindowViewModel : ViewModelBase
 
         // All colors used, cycle through
         return allColors[Flags.Count % allColors.Length];
+    }
+
+    // Field Split Commands
+    [RelayCommand]
+    private void OpenFieldSplitDialog()
+    {
+        var mainWindow = GetMainWindow();
+        if (mainWindow == null) return;
+
+        if (_currentField == null || _currentField.Boundary?.OuterBoundary == null)
+        {
+            StatusText = "No field loaded to split";
+            return;
+        }
+
+        // Reset split state
+        _splitPoint1 = null;
+        _splitPoint2 = null;
+        SplitPoint1Status = "No point dropped";
+        SplitPoint2Status = "No point dropped";
+        SplitFieldNameA = _currentField.Name + "_A";
+        SplitFieldNameB = _currentField.Name + "_B";
+        IsSplitByOnePoint = true;
+        SplitHeading = 0.0;
+        _visualizationControl?.ClearSplitLine();
+        UpdateCanSplitField();
+
+        var dialog = new Views.Dialogs.FieldSplitDialog
+        {
+            DataContext = this
+        };
+        ShowDialogOnLeft(dialog, mainWindow);
+    }
+
+    [RelayCommand]
+    private void DropSplitPoint1()
+    {
+        if (_gpsService.CurrentPosition == null || _currentField == null)
+        {
+            StatusText = "No GPS position or field available";
+            return;
+        }
+
+        var (e, n) = CoordinateConversionService.ToLocal(_gpsService.CurrentPosition, _currentField.Origin);
+        _splitPoint1 = new BoundaryPoint(e, n, 0);
+        SplitPoint1Status = $"Point 1: E={e:F2}m, N={n:F2}m";
+
+        UpdateCanSplitField();
+        UpdateSplitLineVisualization();
+        Console.WriteLine($"[VIEWMODEL] Split point 1 dropped at E={e:F2}, N={n:F2}");
+    }
+
+    [RelayCommand]
+    private void DropSplitPoint2()
+    {
+        if (_gpsService.CurrentPosition == null || _currentField == null)
+        {
+            StatusText = "No GPS position or field available";
+            return;
+        }
+
+        var (e, n) = CoordinateConversionService.ToLocal(_gpsService.CurrentPosition, _currentField.Origin);
+        _splitPoint2 = new BoundaryPoint(e, n, 0);
+        SplitPoint2Status = $"Point 2: E={e:F2}m, N={n:F2}m";
+
+        UpdateCanSplitField();
+        UpdateSplitLineVisualization();
+        Console.WriteLine($"[VIEWMODEL] Split point 2 dropped at E={e:F2}, N={n:F2}");
+    }
+
+    private void UpdateCanSplitField()
+    {
+        if (_currentField == null || string.IsNullOrWhiteSpace(SplitFieldNameA) || string.IsNullOrWhiteSpace(SplitFieldNameB))
+        {
+            CanSplitField = false;
+            return;
+        }
+
+        if (IsSplitByOnePoint)
+        {
+            CanSplitField = _splitPoint1 != null;
+        }
+        else if (IsSplitByTwoPoints)
+        {
+            CanSplitField = _splitPoint1 != null && _splitPoint2 != null;
+        }
+        else
+        {
+            CanSplitField = false;
+        }
+    }
+
+    private void UpdateSplitLineVisualization()
+    {
+        if (_visualizationControl == null || _currentField == null)
+            return;
+
+        // Check if we have enough data to show a split line
+        bool canShowLine = false;
+        if (IsSplitByOnePoint && _splitPoint1 != null)
+        {
+            canShowLine = true;
+        }
+        else if (IsSplitByTwoPoints && _splitPoint1 != null && _splitPoint2 != null)
+        {
+            canShowLine = true;
+        }
+
+        if (canShowLine)
+        {
+            try
+            {
+                var (x1, y1, x2, y2) = GetSplitLine();
+                _visualizationControl.SetSplitLine(x1, y1, x2, y2);
+                Console.WriteLine($"[VIEWMODEL] Split line visualization updated: ({x1:F2},{y1:F2}) to ({x2:F2},{y2:F2})");
+            }
+            catch
+            {
+                _visualizationControl.ClearSplitLine();
+            }
+        }
+        else
+        {
+            _visualizationControl.ClearSplitLine();
+        }
+    }
+
+    [RelayCommand]
+    private async Task ExecuteFieldSplit()
+    {
+        if (_currentField == null || !CanSplitField)
+        {
+            StatusText = "Cannot split field - invalid configuration";
+            return;
+        }
+
+        try
+        {
+            Console.WriteLine($"[VIEWMODEL] Executing field split: Method={(IsSplitByOnePoint ? "OnePoint" : "TwoPoints")}");
+
+            // Define split line
+            (double x1, double y1, double x2, double y2) = GetSplitLine();
+
+            Console.WriteLine($"[VIEWMODEL] Split line: ({x1:F2},{y1:F2}) to ({x2:F2},{y2:F2})");
+
+            // Split the boundary
+            var (polygonA, polygonB) = SplitPolygon(_currentField.Boundary.OuterBoundary.Points, x1, y1, x2, y2);
+
+            if (polygonA.Count < 3 || polygonB.Count < 3)
+            {
+                StatusText = "Split failed - one or both polygons are invalid";
+                Console.WriteLine($"[VIEWMODEL] Split failed: PolygonA={polygonA.Count} points, PolygonB={polygonB.Count} points");
+                await ShowMessageBox("Split Failed", "The split line does not create two valid polygons. Try a different split line.");
+                return;
+            }
+
+            // Create two new fields
+            CreateSplitFields(polygonA, polygonB);
+
+            // Clear visualization
+            _visualizationControl?.ClearSplitLine();
+
+            StatusText = $"Field split successfully: {SplitFieldNameA} and {SplitFieldNameB} created";
+            Console.WriteLine($"[VIEWMODEL] Fields created: {SplitFieldNameA} ({polygonA.Count} pts), {SplitFieldNameB} ({polygonB.Count} pts)");
+
+            // Show success message
+            await ShowMessageBox("Fields Split Successfully",
+                $"Field '{_currentField.Name}' has been split into:\n\n" +
+                $"• {SplitFieldNameA}\n" +
+                $"• {SplitFieldNameB}\n\n" +
+                $"Both fields have been saved with all inner boundaries preserved.");
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Error splitting field: {ex.Message}";
+            Console.WriteLine($"[VIEWMODEL] Error splitting field: {ex.Message}");
+            _visualizationControl?.ClearSplitLine();
+            await ShowMessageBox("Split Error", $"An error occurred while splitting the field:\n\n{ex.Message}");
+        }
+    }
+
+    [RelayCommand]
+    private void CancelFieldSplit()
+    {
+        _splitPoint1 = null;
+        _splitPoint2 = null;
+        SplitPoint1Status = "No point dropped";
+        SplitPoint2Status = "No point dropped";
+        _visualizationControl?.ClearSplitLine();
+        StatusText = "Field split cancelled";
+        Console.WriteLine("[VIEWMODEL] Field split cancelled");
+    }
+
+    private (double x1, double y1, double x2, double y2) GetSplitLine()
+    {
+        if (_splitPoint1 == null)
+        {
+            throw new InvalidOperationException("Split point 1 is not set");
+        }
+
+        double x1 = _splitPoint1.Easting;
+        double y1 = _splitPoint1.Northing;
+        double x2, y2;
+
+        if (IsSplitByOnePoint)
+        {
+            // Calculate second point from heading
+            // Heading in degrees, 0 = North, 90 = East
+            double headingRadians = SplitHeading * Math.PI / 180.0;
+
+            // Project out 10000 meters in the heading direction
+            double distance = 10000.0;
+            x2 = x1 + distance * Math.Sin(headingRadians);
+            y2 = y1 + distance * Math.Cos(headingRadians);
+        }
+        else // TwoPoints
+        {
+            if (_splitPoint2 == null)
+            {
+                throw new InvalidOperationException("Split point 2 is not set");
+            }
+
+            x2 = _splitPoint2.Easting;
+            y2 = _splitPoint2.Northing;
+        }
+
+        return (x1, y1, x2, y2);
+    }
+
+    private (List<BoundaryPoint> polygonA, List<BoundaryPoint> polygonB) SplitPolygon(
+        IList<BoundaryPoint> boundaryPoints, double lineX1, double lineY1, double lineX2, double lineY2)
+    {
+        var polygonA = new List<BoundaryPoint>();
+        var polygonB = new List<BoundaryPoint>();
+        var intersections = new List<(BoundaryPoint point, int index)>();
+
+        // Find all intersection points
+        for (int i = 0; i < boundaryPoints.Count; i++)
+        {
+            var p1 = boundaryPoints[i];
+            var p2 = boundaryPoints[(i + 1) % boundaryPoints.Count];
+
+            var intersection = FindLineSegmentIntersection(
+                p1.Easting, p1.Northing, p2.Easting, p2.Northing,
+                lineX1, lineY1, lineX2, lineY2);
+
+            if (intersection.HasValue)
+            {
+                var (intX, intY) = intersection.Value;
+                intersections.Add((new BoundaryPoint(intX, intY, 0), i));
+                Console.WriteLine($"[VIEWMODEL] Intersection found at segment {i}: E={intX:F2}, N={intY:F2}");
+            }
+        }
+
+        if (intersections.Count < 2)
+        {
+            Console.WriteLine($"[VIEWMODEL] Not enough intersections: {intersections.Count}");
+            return (new List<BoundaryPoint>(), new List<BoundaryPoint>());
+        }
+
+        // Sort intersections by position along boundary
+        intersections = intersections.OrderBy(x => x.index).ToList();
+
+        // Use first two intersections for split
+        var int1 = intersections[0];
+        var int2 = intersections[1];
+
+        // Build polygon A: points from int1 to int2 + intersection points
+        polygonA.Add(int1.point);
+        for (int i = int1.index + 1; i <= int2.index; i++)
+        {
+            polygonA.Add(boundaryPoints[i]);
+        }
+        polygonA.Add(int2.point);
+
+        // Build polygon B: points from int2 to int1 (wrapping around) + intersection points
+        polygonB.Add(int2.point);
+        int idx = (int2.index + 1) % boundaryPoints.Count;
+        while (idx != (int1.index + 1) % boundaryPoints.Count)
+        {
+            polygonB.Add(boundaryPoints[idx]);
+            idx = (idx + 1) % boundaryPoints.Count;
+        }
+        polygonB.Add(int1.point);
+
+        return (polygonA, polygonB);
+    }
+
+    private (double, double)? FindLineSegmentIntersection(
+        double p1x, double p1y, double p2x, double p2y,
+        double p3x, double p3y, double p4x, double p4y)
+    {
+        double denom = (p1x - p2x) * (p3y - p4y) - (p1y - p2y) * (p3x - p4x);
+
+        if (Math.Abs(denom) < 1e-10)
+        {
+            return null; // Parallel or coincident
+        }
+
+        double t = ((p1x - p3x) * (p3y - p4y) - (p1y - p3y) * (p3x - p4x)) / denom;
+        double u = -((p1x - p2x) * (p1y - p3y) - (p1y - p2y) * (p1x - p3x)) / denom;
+
+        if (t >= 0 && t <= 1 && u >= 0 && u <= 1)
+        {
+            double intX = p1x + t * (p2x - p1x);
+            double intY = p1y + t * (p2y - p1y);
+            return (intX, intY);
+        }
+
+        return null;
+    }
+
+    private void CreateSplitFields(List<BoundaryPoint> polygonA, List<BoundaryPoint> polygonB)
+    {
+        if (_currentField == null) return;
+
+        // Create Field A
+        var fieldA = new Field
+        {
+            Name = SplitFieldNameA,
+            Origin = new Position
+            {
+                Latitude = _currentField.Origin.Latitude,
+                Longitude = _currentField.Origin.Longitude,
+                Altitude = _currentField.Origin.Altitude
+            },
+            CreatedDate = DateTime.Now,
+            Boundary = new Boundary()
+        };
+
+        fieldA.Boundary.OuterBoundary = new BoundaryPolygon();
+        foreach (var pt in polygonA)
+        {
+            fieldA.Boundary.OuterBoundary.Points.Add(pt);
+        }
+
+        // Copy all inner boundaries from original field to Field A
+        if (_currentField.Boundary?.InnerBoundaries != null)
+        {
+            foreach (var innerBoundary in _currentField.Boundary.InnerBoundaries)
+            {
+                var newInnerBoundary = new BoundaryPolygon();
+                foreach (var pt in innerBoundary.Points)
+                {
+                    newInnerBoundary.Points.Add(new BoundaryPoint(pt.Easting, pt.Northing, pt.Heading));
+                }
+                fieldA.Boundary.InnerBoundaries.Add(newInnerBoundary);
+            }
+        }
+
+        // Create Field B
+        var fieldB = new Field
+        {
+            Name = SplitFieldNameB,
+            Origin = new Position
+            {
+                Latitude = _currentField.Origin.Latitude,
+                Longitude = _currentField.Origin.Longitude,
+                Altitude = _currentField.Origin.Altitude
+            },
+            CreatedDate = DateTime.Now,
+            Boundary = new Boundary()
+        };
+
+        fieldB.Boundary.OuterBoundary = new BoundaryPolygon();
+        foreach (var pt in polygonB)
+        {
+            fieldB.Boundary.OuterBoundary.Points.Add(pt);
+        }
+
+        // Copy all inner boundaries from original field to Field B
+        if (_currentField.Boundary?.InnerBoundaries != null)
+        {
+            foreach (var innerBoundary in _currentField.Boundary.InnerBoundaries)
+            {
+                var newInnerBoundary = new BoundaryPolygon();
+                foreach (var pt in innerBoundary.Points)
+                {
+                    newInnerBoundary.Points.Add(new BoundaryPoint(pt.Easting, pt.Northing, pt.Heading));
+                }
+                fieldB.Boundary.InnerBoundaries.Add(newInnerBoundary);
+            }
+        }
+
+        // Save both fields
+        var baseDir = Path.GetDirectoryName(_currentField.DirectoryPath) ?? "";
+        var fieldAPath = Path.Combine(baseDir, SplitFieldNameA);
+        var fieldBPath = Path.Combine(baseDir, SplitFieldNameB);
+
+        Directory.CreateDirectory(fieldAPath);
+        Directory.CreateDirectory(fieldBPath);
+
+        fieldA.DirectoryPath = fieldAPath;
+        fieldB.DirectoryPath = fieldBPath;
+
+        FieldPlaneFileService.SaveField(fieldA, fieldAPath);
+        BoundaryFileService.SaveBoundary(fieldA.Boundary, fieldAPath);
+
+        FieldPlaneFileService.SaveField(fieldB, fieldBPath);
+        BoundaryFileService.SaveBoundary(fieldB.Boundary, fieldBPath);
+
+        Console.WriteLine($"[VIEWMODEL] Field A saved: {fieldAPath}, {fieldA.Boundary.AreaHectares:F2} ha");
+        Console.WriteLine($"[VIEWMODEL] Field B saved: {fieldBPath}, {fieldB.Boundary.AreaHectares:F2} ha");
     }
 
     [RelayCommand]
