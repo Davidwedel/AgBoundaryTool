@@ -2649,6 +2649,13 @@ public partial class MainWindowViewModel : ViewModelBase
 
         // Clear modification visualization
         _visualizationControl?.SetNotchPoints(NotchPoints);
+
+        // Save state for undo (AFTER the change)
+        string actionDesc = _modifyOperation == "notch" ? "Apply Outer Boundary Notch" : "Apply Outer Boundary Bulge";
+        _historyService.SaveState(_currentField.Boundary, actionDesc);
+
+        // Update history buttons
+        UpdateHistoryButtons();
     }
 
     private void ApplyInnerBoundaryModificationUnified()
@@ -2708,6 +2715,13 @@ public partial class MainWindowViewModel : ViewModelBase
 
         StatusText = $"Inner boundary {_modifyOperation} applied successfully - Area: {BoundaryArea:F2} ha";
         Console.WriteLine($"[VIEWMODEL] Inner boundary {_modifyOperation} applied. New inner boundary has {targetInnerBoundary.Points.Count} points");
+
+        // Save state for undo (AFTER the change)
+        string actionDesc = _modifyOperation == "notch" ? "Apply Inner Boundary Notch" : "Apply Inner Boundary Bulge";
+        _historyService.SaveState(_currentField.Boundary, actionDesc);
+
+        // Update history buttons
+        UpdateHistoryButtons();
     }
 
     [RelayCommand]
